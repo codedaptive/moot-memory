@@ -20,12 +20,12 @@ path = "src/lib.rs"
 # disabled (the default). Off-path cost: one AtomicBool load + branch.
 # Authority: DECISION_LIFT_PACKAGE_SWIFT_RULE_2026-05-28 + MANAGER_1.0_PLAN §4.
 [dependencies]
-substrate-ml = { path = "../../../libs/SubstrateML/rust" }
-substrate-types = { path = "../../../libs/SubstrateTypes/rust" }
-engram-lib = { path = "../../../libs/EngramLib/rust" }
-persistence-kit = { path = "../../PersistenceKit/rust" }
+substrate-ml = { package = "substrate-ml", git = "https://github.com/codedaptive/moot-core", branch = "main" }
+substrate-types = { package = "substrate-types", git = "https://github.com/codedaptive/moot-core", branch = "main" }
+engram-lib = { package = "engram-lib", git = "https://github.com/codedaptive/moot-core", branch = "main" }
+persistence-kit = { package = "persistence-kit", git = "https://github.com/codedaptive/moot-system", branch = "main" }
 uuid = { version = "1", features = ["v4"] }
-intellectus-lib = { path = "../../../libs/IntellectusLib/rust" }
+intellectus-lib = { package = "intellectus-lib", git = "https://github.com/codedaptive/moot-core", branch = "main" }
 
 # tempfile is used in ResidentArrayStore tests to create temporary .vec
 # persistence tests (write → mmap-reopen → identical top-k) on a real

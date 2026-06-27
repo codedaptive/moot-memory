@@ -266,6 +266,39 @@ Removed internal/process comment lines:
 - `packages/kits/VectorKit/rust/tests/bulk_ingest_tests.rs`: 1 line(s)
 - `packages/kits/VectorKit/rust/tests/int8_reject_tests.rs`: 1 line(s)
 
+## Dependency Rewrites
+
+Rewritten cross-venue Cargo dependencies:
+
+- packages/kits/CorpusKit/rust-providers/Cargo.toml: `eidetic-lib` -> `codedaptive/moot-semantics`
+- packages/kits/CorpusKit/rust-providers/Cargo.toml: `engram-lib` -> `codedaptive/moot-core`
+- packages/kits/CorpusKit/rust-providers/Cargo.toml: `lattice-lib` -> `codedaptive/moot-semantics`
+- packages/kits/CorpusKit/rust-providers/Cargo.toml: `substrate-kernel` -> `codedaptive/moot-core`
+- packages/kits/CorpusKit/rust-providers/Cargo.toml: `substrate-ml` -> `codedaptive/moot-core`
+- packages/kits/CorpusKit/rust-providers/Cargo.toml: `substrate-types` -> `codedaptive/moot-core`
+- packages/kits/CorpusKit/rust/Cargo.toml: `convergence-kit` -> `codedaptive/moot-system`
+- packages/kits/CorpusKit/rust/Cargo.toml: `eidetic-lib` -> `codedaptive/moot-semantics`
+- packages/kits/CorpusKit/rust/Cargo.toml: `engram-lib` -> `codedaptive/moot-core`
+- packages/kits/CorpusKit/rust/Cargo.toml: `intellectus-lib` -> `codedaptive/moot-core`
+- packages/kits/CorpusKit/rust/Cargo.toml: `persistence-kit` -> `codedaptive/moot-system`
+- packages/kits/CorpusKit/rust/Cargo.toml: `queuekit` -> `codedaptive/moot-system`
+- packages/kits/CorpusKit/rust/Cargo.toml: `substrate-kernel` -> `codedaptive/moot-core`
+- packages/kits/CorpusKit/rust/Cargo.toml: `substrate-lib` -> `codedaptive/moot-core`
+- packages/kits/CorpusKit/rust/Cargo.toml: `substrate-ml` -> `codedaptive/moot-core`
+- packages/kits/CorpusKit/rust/Cargo.toml: `substrate-types` -> `codedaptive/moot-core`
+- packages/kits/LocusKit/rust/Cargo.toml: `intellectus-lib` -> `codedaptive/moot-core`
+- packages/kits/LocusKit/rust/Cargo.toml: `lattice-lib` -> `codedaptive/moot-semantics`
+- packages/kits/LocusKit/rust/Cargo.toml: `persistence-kit` -> `codedaptive/moot-system`
+- packages/kits/LocusKit/rust/Cargo.toml: `substrate-kernel` -> `codedaptive/moot-core`
+- packages/kits/LocusKit/rust/Cargo.toml: `substrate-lib` -> `codedaptive/moot-core`
+- packages/kits/LocusKit/rust/Cargo.toml: `substrate-ml` -> `codedaptive/moot-core`
+- packages/kits/LocusKit/rust/Cargo.toml: `substrate-types` -> `codedaptive/moot-core`
+- packages/kits/VectorKit/rust/Cargo.toml: `engram-lib` -> `codedaptive/moot-core`
+- packages/kits/VectorKit/rust/Cargo.toml: `intellectus-lib` -> `codedaptive/moot-core`
+- packages/kits/VectorKit/rust/Cargo.toml: `persistence-kit` -> `codedaptive/moot-system`
+- packages/kits/VectorKit/rust/Cargo.toml: `substrate-ml` -> `codedaptive/moot-core`
+- packages/kits/VectorKit/rust/Cargo.toml: `substrate-types` -> `codedaptive/moot-core`
+
 ## Notes
 
 This is a mechanical test publish. It proves source export, comment scrubbing,
