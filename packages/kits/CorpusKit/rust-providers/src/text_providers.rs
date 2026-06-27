@@ -81,7 +81,6 @@ use crate::DeterministicTokenizer;
 // Swift+Rust implementations of every primitive listed in
 // docs/engineering/HARNESS_REFERENCE.md. The SimHash
 // projection used below is substrate_ml::float_simhash::project; do
-// not hand-roll a projection. See packages/libs/SubstrateML/AGENTS.md.
 // ─────────────────────────────────────────────────────────────────
 
 /// Host-supplied inference seam: token IDs in, pooled float vector

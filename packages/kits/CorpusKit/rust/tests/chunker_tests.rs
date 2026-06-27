@@ -12,7 +12,6 @@ use corpus_kit::{chunk, ChunkerConfiguration};
 // log fold, Bradley-Terry update, NMF, FFT, eigenvalue centrality,
 // or any other substrate primitive, it's already in substrate-types,
 // substrate-kernel, or substrate-ml. CI catches drift four ways.
-// See packages/libs/Substrate{Types,Kernel,ML}/AGENTS.md.
 // ─────────────────────────────────────────────────────────────────
 use substrate_types::hlc::HLCGenerator;
 

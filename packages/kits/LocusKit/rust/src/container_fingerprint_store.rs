@@ -45,7 +45,6 @@ use crate::schema;
 // log fold, Bradley-Terry update, NMF, FFT, eigenvalue centrality,
 // or any other substrate primitive, it's already in substrate-types,
 // substrate-kernel, or substrate-ml. CI catches drift four ways.
-// See packages/libs/Substrate{Types,Kernel,ML}/AGENTS.md.
 // ─────────────────────────────────────────────────────────────────
 use persistence_kit::predicate::{OrderClause, OrderDirection, StoragePredicate};
 use persistence_kit::storage::Storage;

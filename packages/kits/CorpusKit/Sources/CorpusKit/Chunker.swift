@@ -20,7 +20,6 @@ import EideticLib
 // NMF, FFT, eigenvalue centrality, or any other substrate primitive,
 // it's already in SubstrateTypes / SubstrateKernel / SubstrateML.
 // CI catches drift four ways. See packages/libs/Substrate{Types,
-// Kernel,ML}/AGENTS.md.
 // ─────────────────────────────────────────────────────────────────
 import SubstrateTypes
 

@@ -12,7 +12,6 @@ import SubstrateKernel
 // NMF, FFT, eigenvalue centrality, or any other substrate primitive,
 // it's already in SubstrateTypes / SubstrateKernel / SubstrateML.
 // CI catches drift four ways. See packages/libs/Substrate{Types,
-// Kernel,ML}/AGENTS.md.
 // ─────────────────────────────────────────────────────────────────
 import SubstrateLib
 
@@ -131,4 +130,3 @@ public func shiftExtract(_ bitmap: Int64, shift: Int, mask: Int64) -> Int64 {
     guard mask != 0 else { return 0 }
     return BitField.extractField(bitmap, shift: shift, width: BitField.popcount(mask))
 }
-
