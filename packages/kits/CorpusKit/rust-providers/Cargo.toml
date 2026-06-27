@@ -1,0 +1,49 @@
+[package]
+name = "corpus-kit-providers"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Rust port of Swift's CorpusKitProviders target: concrete vectorkit::EmbeddingProvider and Tokenizer implementations. Ships the named text providers (MiniLM, mpnet, EmbeddingGemma) over a host-supplied inference seam plus the DeterministicTokenizer fallback. No model weights or ML-runtime crates are bundled; the host injects the inference pass on every platform (CoreML on Apple, host-chosen runtime on Windows/Linux)."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "corpus_kit_providers"
+path = "src/lib.rs"
+
+[dependencies]
+corpus-kit = { path = "../rust" }
+# F5b: substrate-types provides FNV-1a as a public substrate atomic
+# (I-25). DeterministicTokenizer consumes substrate_types::fnv::hash32
+# by name instead of reimplementing the hash inline.
+substrate-types = { path = "../../../libs/SubstrateTypes/rust" }
+# substrate-kernel: canonical float-vector ops (l2_normalize, dot, cosine).
+# RandomIndexingProvider calls substrate_kernel::float_vec_ops::l2_normalize
+# instead of the former inline implementation. Layering: corpus-kit-providers
+# Authority: DECISION_LIFT_PACKAGE_SWIFT_RULE_2026-05-28 + arch mandate §4.
+substrate-kernel = { path = "../../../libs/SubstrateKernel/rust" }
+# B2-5: the named text providers conform to vectorkit::EmbeddingProvider
+# and project pooled vectors through substrate_ml::float_simhash::project
+# (the conformance-gated, bit-identical Swift/Rust SimHash). engram-lib
+# supplies the Engram type the providers return. These mirror the deps
+# Swift's CorpusKitProviders target carries (VectorKit, SubstrateML,
+# EngramLib); the seam shape is identical across ports.
+vectorkit = { path = "../../VectorKit/rust" }
+substrate-ml = { path = "../../../libs/SubstrateML/rust" }
+engram-lib = { path = "../../../libs/EngramLib/rust" }
+# FDCProvider: text → FDC code via lattice-lib's Fdc::encode (the Rust port
+# of LatticeLib's FDC runtime). eidetic-lib is not needed directly (FDCProvider
+# calls the lattice-lib surface only) but is declared here for structural
+# parity with Swift's CorpusKitProviders depending on EideticLib.
+# Authority: ADR-010 Decision B (FDC co-classification signal).
+lattice-lib = { path = "../../../libs/LatticeLib/rust" }
+eidetic-lib = { path = "../../../libs/EideticLib/rust" }
+
+[dev-dependencies]
+# B2-5: the embedding conformance test deserialises the shared canonical
+# vectors (Tests/SharedVectors/embedding_provider_vectors.json) that the
+# Swift leg emits. serde / serde_json are already in use across the
+# workspace (corpus-kit's own conformance tests); no new external
+# dependency is introduced to the project.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

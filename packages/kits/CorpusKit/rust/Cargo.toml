@@ -1,0 +1,80 @@
+[package]
+name = "corpus-kit"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Rust port of the Swift CorpusKit: Chunk, sentence-aware chunker (fallback path), BM25 inverted index, BundleStore on persistence-kit, hybrid recall (RRF fusion of vector kNN + BM25), CorpusKitSync manifest."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "corpus_kit"
+path = "src/lib.rs"
+
+[dependencies]
+substrate-types = { path = "../../../libs/SubstrateTypes/rust" }
+# SubstrateLib: MerkleHash::leaf for the ContentHashProvider callback
+# that HashingRowStore invokes on every chunk insert (ADR-017 §16).
+# Authority: DECISION_LIFT_PACKAGE_SWIFT_RULE_2026-05-28 + ADR-017 §19.
+substrate-lib = { path = "../../../libs/SubstrateLib/rust" }
+# SubstrateKernel: sha256::hash for deterministic corpus UUID derivation,
+# used by the HashParentChainProvider (chunk → corpus parent chain).
+substrate-kernel = { path = "../../../libs/SubstrateKernel/rust" }
+# B2-5: the named EmbeddingModelConfig cases (MiniLM/MPNet/EmbeddingGemma)
+# project pooled vectors through substrate_ml::float_simhash::project — the
+# conformance-gated, bit-identical Swift/Rust SimHash. The Swift CorpusKit
+# core target carries the matching SubstrateML dependency for the same
+# CorpusTextProvider projection; this is the parity addition. Layering is
+substrate-ml = { path = "../../../libs/SubstrateML/rust" }
+engram-lib = { path = "../../../libs/EngramLib/rust" }
+eidetic-lib = { path = "../../../libs/EideticLib/rust" }
+persistence-kit = { path = "../../PersistenceKit/rust" }
+convergence-kit = { path = "../../ConvergenceKit/rust" }
+vectorkit = { path = "../../VectorKit/rust" }
+# QueueKit: CorpusKit owns its own ingest queue + drain worker pool, so it
+# mounts a QueueKit-backed encode queue (transient in-memory PersistenceKit
+# backend) and drains it directly — the SDK-standalone ingest pipeline (a
+# Corpus queues, drains, and encodes itself with no GeniusLocusKit). Mirrors
+# the Swift `import QueueKit` in CorpusKit. QueueKit is a low-level primitive
+# (substrate-types + persistence-kit + intellectus-lib); corpus-kit → queuekit
+# is downstream→upstream, no inversion.
+# Per DECISION_LIFT_PACKAGE_SWIFT_RULE_2026-05-28 (Rust no-inversion rule).
+queuekit = { path = "../../QueueKit/rust", features = ["persistencekit"] }
+# IntellectusLib: zero-dependency telemetry leaf. Added for P2
+# self-report coverage (cp-corpuskit-report). When monitoring is
+# disabled (the default), the report! macro expands to a single
+# AtomicBool::load + branch — zero allocation, no clock.
+# Layering-safe: intellectus-lib depends only on std.
+intellectus-lib = { path = "../../../libs/IntellectusLib/rust" }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# InvertedIndexStore uses rusqlite directly for its SQLite persistence
+# sidecar — same bundled SQLite as PersistenceKit so no second copy of
+# the library ships. The bundled feature pins the version identically.
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Integration tests need a concrete tokenizer; the test-fixture
+# `DeterministicTokenizer` lives in the sibling `corpus-kit-providers`
+# crate (mirrors the Swift `CorpusKitProviders` target). Dev-only so
+# the core kit stays provider-free in normal builds.
+[features]
+# test-seams: enables the `open_with_provider` constructor and the
+# `forced_float_error` field on `Corpus`. These surfaces are deliberately
+# absent from normal production builds. GLK declares corpus-kit with this
+# feature in its [dev-dependencies] so the parity test suite can reach
+# them; nothing in the GLK production binary enables the feature.
+test-seams = []
+
+[dev-dependencies]
+corpus-kit-providers = { path = "../rust-providers" }
+# InvertedIndexStore round-trip test opens a real file-backed connection.
+rusqlite = { version = "0.31", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+
+# corpus_tests.rs uses forced_float_error and open_with_provider seams — declare
+# them as required-features so `cargo test` picks up the test-seams flag for this
+# integration-test binary automatically.
+[[test]]
+name = "corpus_tests"
+required-features = ["test-seams"]

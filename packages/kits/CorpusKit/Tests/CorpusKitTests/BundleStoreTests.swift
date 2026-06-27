@@ -1,0 +1,267 @@
+// BundleStoreTests.swift
+//
+// Integration tests for BundleStore.
+//
+// INTELLECTUS LOCK: All tests that call store.insert (which emits
+// corpuskit.ingest.* metrics via BundleStore.insert) hold
+// GlobalTestLock.shared for their entire duration. This prevents
+// concurrent telemetry tests from seeing spurious emissions in their
+// capturing sinks.
+//
+// The @Suite(.serialized) on this suite serialises tests within the
+// suite; GlobalTestLock prevents interleaving with the telemetry
+// suite's emit-path tests across suites.
+
+import Testing
+import Foundation
+import SubstrateTypes
+import CorpusKit
+import PersistenceKit
+// ─────────────────────────────────────────────────────────────────
+// DO NOT REIMPLEMENT SUBSTRATE MATH.
+//
+// The substrate publishes conformance-gated, byte-identical
+// Swift+Rust implementations of every primitive listed in
+// docs/engineering/HARNESS_REFERENCE.md. If you
+// need SimHash, Hamming, OR-reduce, Fingerprint256 ops, HammingNN
+// top-K, HLC, AuditGate, MatrixDecay, AuditLogFold, Bradley-Terry,
+// NMF, FFT, eigenvalue centrality, or any other substrate primitive,
+// it's already in SubstrateTypes / SubstrateKernel / SubstrateML.
+// CI catches drift four ways. See packages/libs/Substrate{Types,
+// Kernel,ML}/AGENTS.md.
+// ─────────────────────────────────────────────────────────────────
+
+@Suite("BundleStore", .serialized)
+struct BundleStoreTests {
+
+    func makeStore() async throws -> BundleStore {
+        let storage = try makeScratchStorage()
+        try await storage.open(schema: BundleStore.schemaDeclaration)
+        return BundleStore(storage: storage)
+    }
+
+    func makeChunk(_ text: String) -> Chunk {
+        Chunk(
+            sourceID: "doc-A",
+            startOffset: 0,
+            length: text.count,
+            text: text,
+            hlc: HLC(physicalTime: 100, logicalCount: 0, nodeID: 1)
+        )
+    }
+
+    @Test func insertAndGet() async throws {
+        try await GlobalTestLock.shared.withLock {
+            let store = try await makeStore()
+            let chunk = makeChunk("hello world")
+            try await store.insert([chunk])
+            let fetched = try await store.get(id: chunk.id)
+            #expect(fetched?.text == "hello world")
+            #expect(fetched?.sourceID == "doc-A")
+        }
+    }
+
+    @Test func getMany() async throws {
+        try await GlobalTestLock.shared.withLock {
+            let store = try await makeStore()
+            let chunks = (0..<5).map { makeChunk("chunk \($0)") }
+            try await store.insert(chunks)
+            let ids = chunks.map { $0.id }
+            let fetched = try await store.getMany(ids: ids)
+            #expect(fetched.count == 5)
+        }
+    }
+
+    @Test func chunksForSource() async throws {
+        try await GlobalTestLock.shared.withLock {
+            let store = try await makeStore()
+            let chunks = (0..<3).map { makeChunk("chunk \($0)") }
+            try await store.insert(chunks)
+            let forDoc = try await store.chunksForSource("doc-A")
+            #expect(forDoc.count == 3)
+        }
+    }
+
+    @Test func metadataRoundtrip() async throws {
+        try await GlobalTestLock.shared.withLock {
+            let store = try await makeStore()
+            let c = Chunk(
+                sourceID: "doc-B",
+                startOffset: 0,
+                length: 5,
+                text: "hello",
+                hlc: HLC(physicalTime: 100, logicalCount: 0, nodeID: 1),
+                metadata: ["author": "bob", "topic": "test"]
+            )
+            try await store.insert([c])
+            let fetched = try await store.get(id: c.id)
+            #expect(fetched?.metadata["author"] == "bob")
+            #expect(fetched?.metadata["topic"] == "test")
+        }
+    }
+
+    @Test func reinsertSameIDIsIdempotentNoOp() async throws {
+        // The chunks table is append-only and content-addressed by id.
+        // Re-inserting a chunk with an id already present is a no-op,
+        // not an error: the first write wins and the duplicate is
+        // silently dropped. This is the invariant the sync layer's
+        // .appendOnly conflict policy relies on.
+        try await GlobalTestLock.shared.withLock {
+            let store = try await makeStore()
+            let c = makeChunk("original text")
+            try await store.insert([c])
+
+            // A second chunk carrying the same id but different content.
+            let dup = Chunk(
+                id: c.id,
+                sourceID: "doc-A",
+                startOffset: 0,
+                length: 12,
+                text: "changed text",
+                hlc: HLC(physicalTime: 200, logicalCount: 0, nodeID: 1)
+            )
+            // Must not throw, and must not mutate the stored row.
+            try await store.insert([dup])
+
+            let fetched = try await store.get(id: c.id)
+            #expect(fetched?.text == "original text")
+            let n = try await store.count()
+            #expect(n == 1)
+        }
+    }
+
+    @Test func count() async throws {
+        try await GlobalTestLock.shared.withLock {
+            let store = try await makeStore()
+            let chunks = (0..<7).map { makeChunk("c\($0)") }
+            try await store.insert(chunks)
+            let n = try await store.count()
+            #expect(n == 7)
+        }
+    }
+
+
+    @Test func deriveIDMatchesCrossLanguageGroundTruth() {
+        // These expected values are the RFC 4122 v5 UUIDs computed by
+        // the reference (Python uuid5 / Rust Uuid::new_v5) over the same
+        // namespace and name encoding. Asserting the literal values here
+        // and in the Rust parity test guarantees byte-identity across
+        // the Swift and Rust ports by construction.
+        #expect(
+            Chunk.deriveID(sourceID: "doc-A", startOffset: 0, text: "hello world").uuidString.lowercased()
+            == "e12ecb90-0ba9-588d-8d83-c0266f6aa2d5")
+        #expect(
+            Chunk.deriveID(sourceID: "doc-A", startOffset: 800, text: "second").uuidString.lowercased()
+            == "6f3a935a-cd10-5083-b143-f330be4d81da")
+        #expect(
+            Chunk.deriveID(sourceID: "src-E", startOffset: 0, text: "original").uuidString.lowercased()
+            == "dc121d31-5fec-5404-9208-01a11d044191")
+    }
+
+    @Test func deriveIDIsContentSensitive() {
+        // Different offset or different text yields a different id.
+        #expect(
+            Chunk.deriveID(sourceID: "doc-A", startOffset: 0, text: "x")
+            != Chunk.deriveID(sourceID: "doc-A", startOffset: 1, text: "x"))
+        #expect(
+            Chunk.deriveID(sourceID: "doc-A", startOffset: 0, text: "x")
+            != Chunk.deriveID(sourceID: "doc-A", startOffset: 0, text: "y"))
+    }
+
+    // MARK: - Per-corpus Merkle root (NT-C1 Part 3)
+
+    @Test func corpusMerkleRootEmptyBeforeInsert() async throws {
+        try await GlobalTestLock.shared.withLock {
+            let store = try await makeStore()
+            let root = try await store.corpusMerkleRoot(for: "nonexistent")
+            #expect(root == MerkleRoot.empty)
+        }
+    }
+
+    @Test func corpusMerkleRootUpdatesAfterInsert() async throws {
+        try await GlobalTestLock.shared.withLock {
+            let store = try await makeStore()
+            let c1 = Chunk(
+                sourceID: "src-merkle", startOffset: 0, length: 5, text: "alpha",
+                hlc: HLC(physicalTime: 1, logicalCount: 0, nodeID: 1))
+            try await store.insert([c1])
+            let root1 = try await store.corpusMerkleRoot(for: "src-merkle")
+            #expect(root1 != MerkleRoot.empty)
+
+            let c2 = Chunk(
+                sourceID: "src-merkle", startOffset: 10, length: 4, text: "beta",
+                hlc: HLC(physicalTime: 2, logicalCount: 0, nodeID: 1))
+            try await store.insert([c2])
+            let root2 = try await store.corpusMerkleRoot(for: "src-merkle")
+            #expect(root2 != MerkleRoot.empty)
+            #expect(root2 != root1, "root must change when a chunk is added")
+        }
+    }
+
+    @Test func corpusMerkleRootDiffersPerSource() async throws {
+        try await GlobalTestLock.shared.withLock {
+            let store = try await makeStore()
+            let c1 = Chunk(
+                sourceID: "src-X", startOffset: 0, length: 5, text: "hello",
+                hlc: HLC(physicalTime: 1, logicalCount: 0, nodeID: 1))
+            let c2 = Chunk(
+                sourceID: "src-Y", startOffset: 0, length: 5, text: "world",
+                hlc: HLC(physicalTime: 2, logicalCount: 0, nodeID: 1))
+            try await store.insert([c1, c2])
+            let rootX = try await store.corpusMerkleRoot(for: "src-X")
+            let rootY = try await store.corpusMerkleRoot(for: "src-Y")
+            #expect(rootX != MerkleRoot.empty)
+            #expect(rootY != MerkleRoot.empty)
+            #expect(rootX != rootY, "different corpora must have different roots")
+        }
+    }
+
+    @Test func globalCorpusMerkleRootReflectsAllCorpora() async throws {
+        try await GlobalTestLock.shared.withLock {
+            let store = try await makeStore()
+            let emptyGlobal = try await store.globalCorpusMerkleRoot()
+            #expect(emptyGlobal == MerkleRoot.empty)
+
+            let c1 = Chunk(
+                sourceID: "src-G1", startOffset: 0, length: 4, text: "data",
+                hlc: HLC(physicalTime: 1, logicalCount: 0, nodeID: 1))
+            try await store.insert([c1])
+            let global1 = try await store.globalCorpusMerkleRoot()
+            #expect(global1 != MerkleRoot.empty)
+
+            let c2 = Chunk(
+                sourceID: "src-G2", startOffset: 0, length: 4, text: "more",
+                hlc: HLC(physicalTime: 2, logicalCount: 0, nodeID: 1))
+            try await store.insert([c2])
+            let global2 = try await store.globalCorpusMerkleRoot()
+            #expect(global2 != global1, "global root must change when a new corpus is added")
+        }
+    }
+
+    // MARK: - Content-addressed id
+
+    @Test func reingestionIsIdempotent() async throws {
+        // Re-chunking the same source text and re-inserting must not
+        // grow the store: content-addressed ids make the second pass a
+        // batch of duplicate-key no-ops. This is the guarantee the
+        // sync layer's .appendOnly conflict policy depends on.
+        try await GlobalTestLock.shared.withLock {
+            let store = try await makeStore()
+            let c = Chunk(
+                sourceID: "doc-Z", startOffset: 0, length: 5, text: "hello",
+                hlc: HLC(physicalTime: 100, logicalCount: 0, nodeID: 1))
+            try await store.insert([c])
+
+            // A fresh Chunk built from identical content gets the same id,
+            // even with a different HLC tag (hlc is not part of identity).
+            let again = Chunk(
+                sourceID: "doc-Z", startOffset: 0, length: 5, text: "hello",
+                hlc: HLC(physicalTime: 999, logicalCount: 0, nodeID: 2))
+            #expect(c.id == again.id)
+            try await store.insert([again])
+
+            let n = try await store.count()
+            #expect(n == 1)
+        }
+    }
+}
