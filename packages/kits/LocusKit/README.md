@@ -47,8 +47,6 @@ LocusKit is the right kit when you need exactly one estate. For coordinating mul
 - `docs/specs/GENIUSLOCUS_ARCHITECTURE_SPEC_v0.35.md` — §§ 5–8
 - `docs/specs/Q1_DECISION_PROVENANCE_BITMAP.md`
 - `docs/specs/Q1_DECISION_MANIFEST_SCHEMA.md`
-- `.claude/skills/bitmap-patterns/SKILL.md` — mandatory before any bitmap mission
-- `.claude/skills/substrate-engineering/SKILL.md` — mandatory before any algorithm mission
 
 ## Scope
 

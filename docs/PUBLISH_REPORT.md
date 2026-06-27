@@ -129,6 +129,7 @@ Removed internal/process comment lines:
 - `packages/kits/CorpusKit/rust/tests/fusion_tests.rs`: 1 line(s)
 - `packages/kits/CorpusKit/rust/tests/hybrid_recall_tests.rs`: 1 line(s)
 - `packages/kits/LocusKit/Package.swift`: 2 line(s)
+- `packages/kits/LocusKit/README.md`: 2 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/Adjectives.swift`: 2 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/Association.swift`: 2 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/AssociationOperational.swift`: 1 line(s)
