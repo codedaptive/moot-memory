@@ -374,4 +374,97 @@ struct BulkIngestTests {
             #expect(fl.first?.itemID == "chunk-3")
         }
     }
+
+    // ── Finding 2: deferred buffer back-pressure (secfix/punt-vector) ─────────
+
+    /// The memory-only deferred buffer must flush before growing without bound.
+    ///
+    /// Uses a custom `deferredPendingLimit = 100` so the flush triggers after
+    /// 100 records. Sends 300 records in 50-record batches (→ three flush
+    /// events during the deferred window). After `publishResidentIndex`, every
+    /// seeded item must be retrievable at distance 0.
+    ///
+    /// This test verifies the `_flushDeferredPending` code path is reachable and
+    /// leaves the index in a consistent state.
+    @Test func deferredBufferBackPressureFlushesAndStaysCorrect() async throws {
+        try await GlobalTestLock.shared.withLock {
+            let storage = try makeScratchStorage()
+            try await storage.open(schema: VectorStore.schemaDeclaration)
+            // Low deferredPendingLimit (100) so flush triggers frequently at
+            // small scale. Low mihThreshold to avoid MIH build overhead.
+            let store = VectorStore(storage: storage, sidecarURL: nil,
+                                    mihThreshold: 10_000,
+                                    deferredPendingLimit: 100)
+
+            let now = Date(timeIntervalSince1970: 1_700_000_000)
+            let total = 300
+            let batchSize = 50
+
+            try await store.beginDeferredIndex()
+
+            // Send records in batches of 50; three batches will exceed the limit.
+            for start in stride(from: 0, to: total, by: batchSize) {
+                let end = min(start + batchSize, total)
+                let batch = (start..<end).map { binaryInput($0, now: now) }
+                try await store.addPayloads(batch)
+            }
+            try await store.publishResidentIndex()
+
+            // Every 37th item must be findable at distance 0 after flushed publish.
+            for i in stride(from: 0, to: total, by: 37) {
+                let results = try await store.findNearest(
+                    probe: engram(i), modelID: "minilm", limit: 1)
+                #expect(results.first?.itemID == "chunk-\(i)",
+                        "chunk-\(i) must be findable after back-pressure flush")
+                #expect(results.first?.distance == 0,
+                        "self-match for chunk-\(i) must be distance 0")
+            }
+        }
+    }
+
+    // ── Finding 1 (via deferred path): same-itemID both survive ──────────────
+
+    /// Two binary vectors sharing the same itemID but different vectorIndex
+    /// must both survive and be retrievable when added through the deferred
+    /// (beginDeferredIndex / publishResidentIndex) code path.
+    ///
+    /// This gates the MIH-collision fix through `_mergeBatchIntoSnapshot`,
+    /// which is the merge engine the deferred path uses.
+    @Test func deferredWindowSameItemIDBothSurvive() async throws {
+        try await GlobalTestLock.shared.withLock {
+            let storage = try makeScratchStorage()
+            try await storage.open(schema: VectorStore.schemaDeclaration)
+            let store = VectorStore(storage: storage, sidecarURL: nil)
+            let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+            try await store.beginDeferredIndex()
+
+            // Two distinct vectors under the same itemID, different vectorIndex.
+            // vec0 = all-zeros → distance 0 to zero probe
+            // vec1 = 1 bit set → distance 1 to zero probe
+            let batch: [VectorPayloadInput] = [
+                VectorPayloadInput(itemID: "shared-item", vectorIndex: 0,
+                                   payload: VectorPayload(engram: Engram(blocks: 0, 0, 0, 0)),
+                                   modelID: "test-model", modelVersion: "1", filedAt: now),
+                VectorPayloadInput(itemID: "shared-item", vectorIndex: 1,
+                                   payload: VectorPayload(engram: Engram(blocks: 1, 0, 0, 0)),
+                                   modelID: "test-model", modelVersion: "1", filedAt: now),
+            ]
+            try await store.addPayloads(batch)
+            try await store.publishResidentIndex()
+
+            // Query with the zero-vector; both slots must appear in the k=4 result.
+            let hits = try await store.findNearest(
+                probe: Engram(blocks: 0, 0, 0, 0), modelID: "test-model", limit: 4)
+
+            #expect(hits.count == 2,
+                    "both same-itemID entries must survive after deferred publish; got \(hits.count)")
+            // vec0 (distance 0) must rank first.
+            #expect(hits[0].itemID == "shared-item")
+            #expect(hits[0].distance == 0, "zero-distance slot must rank first")
+            // vec1 (distance 1) must rank second.
+            #expect(hits[1].itemID == "shared-item")
+            #expect(hits[1].distance == 1, "one-bit-set slot must rank second")
+        }
+    }
 }

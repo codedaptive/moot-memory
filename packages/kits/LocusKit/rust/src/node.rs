@@ -24,8 +24,9 @@ use uuid::Uuid;
 ///
 /// Nodes represent the structural skeleton: estate root, wings, and
 /// rooms. Drawers reference their parent room via `parent_node_id`
-/// on the drawers table (NT-L2). The `merkle_root` field is included
-/// in the schema but left None until NT-P2/NT-L3 wire hash-on-write.
+/// on the drawers table (NT-L2). The `merkle_root` field is populated
+/// by `rollup_merkle_roots` after drawer writes (NT-L3); new nodes
+/// start with `None` until the first rollup runs.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Node {
     /// Stable UUID identifier for this node.

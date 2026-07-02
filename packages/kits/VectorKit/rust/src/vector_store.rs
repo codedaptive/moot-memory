@@ -38,7 +38,10 @@
 //! bit-for-bit on identical inputs is the conformance BLOCKER (arch spec
 //! §3.3). Results are identical regardless of which index is active.
 //!
-//! Both indexes are kept coherent on every write. The size-threshold policy
+//! By default, both indexes are updated on every write so they stay current
+//! immediately. During a deferred-index burst (`begin_deferred_index` /
+//! `publish_resident_index`), staged rows are not searchable until publish
+//! completes. The size-threshold policy
 //! (`select_index`) swaps `is_mih_active` when `live_binary_count` crosses
 //! `mih_threshold`. Default band count M16 (§1.6: m ≈ b/log2(n); at 50k
 //! log2(50000) ≈ 15.6, nearest conformance value is 16).
@@ -74,7 +77,7 @@ use uuid::Uuid;
 
 /// One row of the `vectors` table. Parallel to the Swift `StoredVector`.
 ///
-/// `filed_at` is Unix epoch seconds; `vector_index` is 0 for
+/// `filed_at` is Unix epoch milliseconds (ADR-023); `vector_index` is 0 for
 /// single-vector models.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredVector {
@@ -85,7 +88,9 @@ pub struct StoredVector {
     pub model_id: String,
     pub model_version: String,
     pub engram: Engram,
-    /// Unix epoch seconds.
+    /// Unix epoch milliseconds (ADR-023). Callers pass the drawer's
+    /// `filed_at`, which is epoch-ms; the `_unix_secs` suffix on the input
+    /// params is legacy naming, not a unit — the value is milliseconds.
     pub filed_at: i64,
 }
 
@@ -136,10 +141,29 @@ pub struct VectorPayloadInput {
     pub model_id: String,
     /// The embedding model version.
     pub model_version: String,
-    /// Wall-clock filing time as Unix epoch seconds (determinism discipline:
-    /// passed in, never read from the system clock inside the engine).
+    /// Wall-clock filing time as Unix epoch milliseconds (ADR-023; determinism
+    /// discipline: passed in, never read from the system clock inside the engine).
     pub filed_at_unix_secs: i64,
 }
+
+// ── Deferred-buffer back-pressure cap ────────────────────────────────────
+
+/// Maximum number of (key, bytes) records that may accumulate in the
+/// memory-only deferred pending buffer before an intermediate index rebuild
+/// is forced.
+///
+/// When no sidecar is present, deferred records accumulate in
+/// `HotState::deferred_pending_records` until `publish_resident_index` is
+/// called. Without this cap, a caller that never calls `publish_resident_index`
+/// (or does so only at process exit) could grow the buffer without bound.
+///
+/// At the cap, `flush_deferred_pending` performs a full merge + index rebuild,
+/// clears the buffer, reseeds `deferred_live_keys`, and keeps
+/// `deferred_index_active = true` so subsequent appends continue deferring
+/// normally. The rebuild is transparent to callers — it does NOT end the
+/// deferred-index window.
+///
+const DEFERRED_PENDING_LIMIT: usize = 50_000;
 
 // ── Hot-path inner state ──────────────────────────────────────────────────
 
@@ -205,6 +229,13 @@ struct HotState {
     /// With no sidecar `array_store`, deferred `add_payloads` records accumulate
     /// here and `publish_resident_index` merges them all in one pass at burst end.
     deferred_pending_records: Vec<(VectorRecordKey, Vec<u8>)>,
+
+    /// Maximum records allowed in `deferred_pending_records` before an
+    /// intermediate flush is forced (memory-only deferred path only).
+    /// Default is `DEFERRED_PENDING_LIMIT` (50_000). Configurable via
+    /// `new_with_deferred_limit` so tests can use a small value to exercise
+    /// the back-pressure flush path without large record counts.
+    deferred_pending_limit: usize,
 
     /// Lane D: the in-house exact float indices, ONE PER modelID, over the
     /// float32 rows in the `vectors` table. Production exact path per Bob's
@@ -368,6 +399,18 @@ impl VectorStore {
         mih_band_count: MIHBandCount,
     ) -> Self {
         let array_store = sidecar_path.map(|p| ResidentArrayStore::new_binary(p));
+        Self::new_internal(storage, array_store, mih_threshold, mih_band_count,
+                           DEFERRED_PENDING_LIMIT)
+    }
+
+    /// Internal constructor. All public constructors delegate here.
+    fn new_internal(
+        storage: Arc<dyn Storage>,
+        array_store: Option<ResidentArrayStore>,
+        mih_threshold: u32,
+        mih_band_count: MIHBandCount,
+        deferred_pending_limit: usize,
+    ) -> Self {
         VectorStore {
             storage,
             state: Mutex::new(HotState {
@@ -382,12 +425,31 @@ impl VectorStore {
                 deferred_index_dirty: false,
                 deferred_live_keys: None,
                 deferred_pending_records: Vec::new(),
+                deferred_pending_limit,
                 // Float indices are built lazily per modelID on first
                 // find_nearest_float; the map starts empty.
                 float_indices: std::collections::HashMap::new(),
                 sidecar_rebuild_count: 0,
             }),
         }
+    }
+
+    /// Test-only constructor: same as `new_with_threshold` but with a custom
+    /// `deferred_pending_limit`. Allows tests to trigger the back-pressure
+    /// flush with a small record count, without flooding the index with
+    /// production-scale data. Not part of the stable public API — exposed
+    /// as `pub` rather than `pub(crate)` because Rust integration tests
+    /// (in `tests/`) are separate crates and cannot see `pub(crate)` items.
+    pub fn new_with_deferred_limit(
+        storage: Arc<dyn Storage>,
+        sidecar_path: Option<PathBuf>,
+        mih_threshold: u32,
+        mih_band_count: MIHBandCount,
+        deferred_pending_limit: usize,
+    ) -> Self {
+        let array_store = sidecar_path.map(|p| ResidentArrayStore::new_binary(p));
+        Self::new_internal(storage, array_store, mih_threshold, mih_band_count,
+                           deferred_pending_limit)
     }
 
     /// Convenience: construct with no sidecar (memory-only resident array).
@@ -446,9 +508,10 @@ impl VectorStore {
     /// `(item_id, vector_index, model_id)`.
     ///
     /// For binary payloads: writes the row AND mirrors the vector into the
-    /// resident array, updating both indexes incrementally. Non-binary
-    /// payloads are written to the table only — the binary BruteForceIndex
-    /// handles only Hamming (I-7).
+    /// resident array, updating the binary index incrementally. For float32
+    /// payloads: writes the row AND mirrors into the per-model
+    /// `FloatBruteForceIndex` when that index is already built. Other kinds
+    /// (e.g. int8) are written to the table only.
     ///
     /// Sidecar persistence is WRITE-BEHIND (TASK #24): the in-memory resident
     /// array is updated immediately but the `.vec` sidecar is marked dirty,
@@ -761,6 +824,16 @@ impl VectorStore {
                     state.live_binary_count =
                         state.live_binary_count.saturating_add(new_key_count);
                     state.deferred_index_dirty = true;
+                    // Back-pressure: if the memory-only deferred buffer exceeds
+                    // DEFERRED_PENDING_LIMIT, flush it now. This bounds peak
+                    // memory use to ~limit × record_size while keeping the deferred
+                    // window open (mode stays active). The sidecar path is excluded
+                    // because sidecar writes are already bounded per append.
+                    if state.array_store.is_none()
+                        && state.deferred_pending_records.len() > state.deferred_pending_limit
+                    {
+                        Self::flush_deferred_pending(&mut state)?;
+                    }
                     // Indexes intentionally NOT rebuilt and select_index NOT
                     // called: publish_resident_index() does both once at burst end.
                 } else {
@@ -960,15 +1033,9 @@ impl VectorStore {
         Ok(())
     }
 
-    /// Merge a batch of (key, bytes) records into a snapshot in one pass.
-    ///
-    /// Used by the memory-only `add_payloads` path. Replaced keys (present in
-    /// the snapshot, live) are tombstoned in place; the new slots are appended
-    /// after the existing storage. Produces a single array the indexes build
-    /// from once — no per-row clone.
-    /// Keep only the last occurrence of each key, preserving first-seen order of
-    /// the survivors. Collapses a memory-only deferral buffer before the single
-    /// merge, since `merge_batch_into_snapshot` appends every record (two records
+    /// Collapse duplicate keys in the deferred memory buffer: keep only the last
+    /// occurrence of each key, preserving first-seen order of the survivors.
+    /// Applied before `merge_batch_into_snapshot` so duplicate keys in a single
     fn dedup_last_wins(
         records: Vec<(VectorRecordKey, Vec<u8>)>,
     ) -> Vec<(VectorRecordKey, Vec<u8>)> {
@@ -993,6 +1060,52 @@ impl VectorStore {
             .collect()
     }
 
+    /// Intermediate flush for the memory-only deferred pending buffer.
+    ///
+    /// Called when `deferred_pending_records.len() > DEFERRED_PENDING_LIMIT`
+    /// and no sidecar is present. Merges the current pending records into the
+    /// resident index in one rebuild pass, then clears the buffer and reseeds
+    /// `deferred_live_keys` from the new snapshot so replacement detection
+    /// remains correct for subsequent writes.
+    ///
+    /// Keeps `deferred_index_active = true` and `deferred_index_dirty = true` —
+    /// the deferred window is NOT ended; callers observe no change in mode.
+    ///
+    fn flush_deferred_pending(state: &mut HotState) -> Result<(), VectorKitError> {
+        if state.deferred_pending_records.is_empty() {
+            return Ok(());
+        }
+        let pending = std::mem::take(&mut state.deferred_pending_records);
+        let cur = state.brute_force_index.array().clone();
+        let merged = Self::merge_batch_into_snapshot(&cur, &Self::dedup_last_wins(pending));
+        let (payloads, keys) = Self::array_to_payloads_keys(&merged);
+        state.brute_force_index.build(&payloads, &keys)?;
+        state.mih_index.build(&payloads, &keys)?;
+        // Recompute live count and live key set authoritatively from the
+        // merged snapshot so incremental drift is corrected before the next
+        // batch arrives.
+        let mut live_count: u32 = 0;
+        let mut live_keys = std::collections::HashSet::new();
+        for i in 0..merged.count {
+            if !merged.is_tombstoned(i) {
+                live_count += 1;
+                live_keys.insert(merged.keys[i].clone());
+            }
+        }
+        state.live_binary_count = live_count;
+        // Replace the deferred live key set so the next batch's replacement
+        // detection is based on what is actually in the rebuilt snapshot.
+        state.deferred_live_keys = Some(live_keys);
+        // deferred_index_active and deferred_index_dirty intentionally stay true.
+        Ok(())
+    }
+
+    /// Merge a batch of (key, bytes) records into a snapshot in one pass.
+    ///
+    /// Used by the memory-only `add_payloads` path. Replaced keys (present in
+    /// the snapshot, live) are tombstoned in place; the new slots are appended
+    /// after the existing storage. Produces a single array the indexes build
+    /// from once — no per-row clone.
     fn merge_batch_into_snapshot(
         snapshot: &crate::engine::resident::ResidentVectorArray,
         records: &[(VectorRecordKey, Vec<u8>)],
@@ -1474,12 +1587,20 @@ impl VectorStore {
     }
 
     /// Remove the row for `(item_id, vector_index, model_id)`. Idempotent.
+    ///
+    /// Publishes any in-flight deferred-index burst before tombstoning the
+    /// resident slot — identical contract to `delete_vector` and
+    /// `delete_all_vectors`. Without the publish step, a deferred slot added
+    /// during a bulk-write window survives the delete in the resident index
+    /// even after the row is removed from the table (secfix/ws2-coredelete:
+    /// hard-delete destruction contract requires no in-memory copy survives).
     pub fn delete_payload(
         &self,
         item_id: &str,
         vector_index: u32,
         model_id: &str,
     ) -> Result<(), VectorKitError> {
+        self.publish_if_deferred_dirty()?;
         self.delete_and_tombstone(item_id, vector_index, model_id)
     }
 
@@ -1901,10 +2022,9 @@ fn decode_payload(
     let kind = VectorKind::from_raw(kind_raw)
         .ok_or_else(|| VectorKitError::DecodingFailure(format!("unknown VectorKind {kind_raw}")))?;
     // Symmetric read-side guard: int8 payloads cannot be decoded until the
-    // quantization policy is ratified. Returning an error here causes calling
-    // read paths (get_payload, vectors_for_item) to surface None or skip the
-    // row — the same safe outcome as a missing row. This prevents silent
-    // consumption of hand-crafted int8 rows.
+    // quantization policy is ratified. Propagates as an Err to callers.
+    // `vectors_for_item` skips the row; `get_payload` surfaces the error
+    // directly. Prevents silent consumption of hand-crafted int8 rows.
     if kind == VectorKind::Int8 {
         return Err(VectorKitError::Int8QuantizationPolicyUndefined(
             "int8 rows cannot be decoded: quantization policy is unspecified. \
@@ -1975,7 +2095,7 @@ fn decode_stored_vector(
         Ok(e) => e,
         Err(_) => return Ok(None),
     };
-    // filed_at is a unix-seconds i64. A timestamp column reads back as `Timestamp`
+    // filed_at is a unix-milliseconds i64 (ADR-023). A timestamp column reads back as `Timestamp`
     // on the InMemory backend and as a primitive `Int` on the SQLite backend
     // (the column stores the integer). Accept both — decoding only `Timestamp`
     // dropped every persisted vector on reopen, blanking the vector recall lane

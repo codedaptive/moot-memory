@@ -2,7 +2,9 @@
 name = "corpus-kit"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+# P8-secfix: trait-object upcasting (dyn Trait as dyn SuperTrait) requires 1.86;
+# CorpusKit uses this pattern so the 1.75 declaration was wrong.
+rust-version = "1.86"
 description = "Rust port of the Swift CorpusKit: Chunk, sentence-aware chunker (fallback path), BM25 inverted index, BundleStore on persistence-kit, hybrid recall (RRF fusion of vector kNN + BM25), CorpusKitSync manifest."
 license = "MIT OR Apache-2.0"
 publish = false

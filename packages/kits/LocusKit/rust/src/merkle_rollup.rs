@@ -97,7 +97,14 @@ impl Estate {
         Ok(())
     }
 
-    /// Compute the Merkle root for a room by hashing its active drawers.
+    /// Compute the Merkle root for a room by hashing its live drawers.
+    ///
+    /// Excludes both tombstoned and withdrawn drawers from the snapshot.
+    /// Tombstoned drawers have tombstonedAt IS NOT NULL. Withdrawn drawers
+    /// have tombstonedAt IS NULL but carry state raw value 18 in bits 0-5
+    /// of adjectiveBitmap (mask 0x3F). Including withdrawn drawers in the
+    /// snapshot would allow retrieval of content that the user retracted,
+    /// violating snapshot completeness (WS2-F1, fixed 2026-06-28).
     fn compute_room_merkle_root(
         &self,
         room_node_id: Uuid,
@@ -113,7 +120,16 @@ impl Estate {
                         Column::new("drawers", "parent_node_id"),
                         TypedValue::Text(room_node_id.to_string()),
                     ),
+                    // Exclude tombstoned drawers (irreversible deletion).
                     StoragePredicate::IsNull(Column::new("drawers", "tombstonedAt")),
+                    // Exclude withdrawn drawers (state 18, bits 0-5 of adjectiveBitmap).
+                    // Withdrawn means the user retracted the drawer; it must not
+                    // appear in the live snapshot that commits hash to.
+                    StoragePredicate::Not(Box::new(StoragePredicate::BitwiseEq {
+                        column: Column::new("drawers", "adjectiveBitmap"),
+                        expected: 18,
+                        mask: 0x3F,
+                    })),
                 ])),
                 &[],
                 None,

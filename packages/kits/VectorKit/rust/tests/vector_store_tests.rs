@@ -404,10 +404,10 @@ fn find_nearest_survives_reopen_sqlite() {
 
 // ---------------------------------------------------------------------------
 // Cross-restart conformance WITH a .vec sidecar (A-11). The resident array is
-// persisted to the sidecar via flush() and reloaded on reopen WITHOUT a full
-// table rescan when the sidecar's live_count matches the table row count
-// (sidecar_rebuild_count stays 0). Either way the reopened find_nearest top-k
-// is identical to the pre-close result.
+// persisted to the sidecar via flush() and reloaded on reopen. No table rebuild
+// is required when the sidecar parses successfully and live_count (recomputed
+// from the tombstone bitmap) matches the table row count (sidecar_rebuild_count
+// stays 0). Either way, the reopened find_nearest top-k is identical.
 // ---------------------------------------------------------------------------
 
 #[test]

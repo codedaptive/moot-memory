@@ -676,7 +676,7 @@ fn add_drawer_result_identical_with_monitoring_on_and_off() {
 
 /// drawers_in_wing results are identical with monitoring on and off.
 /// Set equality (not order) is asserted because two separate in-memory
-/// stores do not guarantee identical SQLite row ordering.
+/// stores do not guarantee identical insertion ordering.
 #[test]
 fn drawers_in_wing_results_identical_with_monitoring_on_and_off() {
     let _guard = global_lock();

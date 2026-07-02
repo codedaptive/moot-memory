@@ -39,9 +39,10 @@
 // CORPUSKIT_REPORT_001 (cp-corpuskit-report): added IntellectusLib
 // self-report telemetry to insert. The emit calls are placed at the
 // operation boundary, after the batch completes, so the storage
-// behaviour is unchanged. When monitoring is disabled (the default),
-// the Intellectus.report(_:) call short-circuits after a single
-// Atomic<Bool> load.
+// behaviour is unchanged. The insert path always reads Date() for
+// startTime, Date() for each chunk's created_at, and Date() for
+// endTime before calling Intellectus.report; the disabled-monitoring
+// path does not short-circuit these clock reads.
 
 import Foundation
 import IntellectusLib
@@ -159,7 +160,7 @@ public actor BundleStore {
                     .blob("content_hash", nullable: true)
                 ],
                 primaryKey: ["id"],
-                appendOnly: true,
+                appendOnly: false,
                 hashable: true
             ),
             // Per-corpus Merkle root: MerkleHash.interior over the
@@ -243,16 +244,19 @@ public actor BundleStore {
     /// maintained provider counts) fold only over the returned set; callers that
     /// don't care discard it (`@discardableResult`).
     ///
-    /// The table is append-only, so the idempotent path is a plain
-    /// insert that tolerates a duplicate-key rejection rather than an
-    /// upsert. An upsert with a non-empty update set compiles to
-    /// `INSERT ... ON CONFLICT DO UPDATE`, whose UPDATE branch the
-    /// append-only trigger aborts; a plain insert hits the primary-key
-    /// constraint instead and surfaces StorageError.duplicateKey,
-    /// which is caught here and treated as the documented no-op. The
-    /// first write of a given id wins; a later insert of the same id
-    /// is dropped, which is correct because chunks are immutable and
-    /// content-addressed.
+    /// The idempotent path is a plain insert that tolerates a
+    /// duplicate-key rejection rather than an upsert. A plain insert
+    /// hits the primary-key constraint and surfaces
+    /// StorageError.duplicateKey, which is caught here and treated as
+    /// the documented no-op. The first write of a given id wins; a
+    /// later insert of the same id is dropped, which is correct because
+    /// chunks are immutable and content-addressed.
+    ///
+    /// Note: the chunks table is NOT append-only (appendOnly: false),
+    /// enabling `scrubText(sourceID:)` to zero verbatim text on expunge
+    /// (secfix/ws2-coredelete: hard-delete destruction contract). The
+    /// idempotent insert path is unaffected — duplicate-key rejection
+    /// happens at the primary-key constraint level, not via triggers.
     ///
     /// Telemetry: emits `corpuskit.ingest.latency_ms` (wall time for the
     /// full batch insert) and `corpuskit.ingest.chunk_count` (number of
@@ -266,9 +270,9 @@ public actor BundleStore {
         var inserted: [Chunk] = []
         inserted.reserveCapacity(chunks.count)
 
-        // Capture start time before the I/O. One Date() read per
-        // call; the computed latency is forwarded to the sink only when
-        // monitoring is enabled (inside the @autoclosure guard).
+        // Capture start time before the I/O. The code also stamps
+        // created_at with Date() for every chunk and reads endTime
+        // after the insert loop; multiple Date() reads occur per call.
         let startTime = Date().timeIntervalSince1970
 
         for chunk in chunks {
@@ -416,11 +420,10 @@ public actor BundleStore {
     /// chunk body text. Selecting only `id` and `source_id` avoids the O(N·body)
     /// cold-start cost of `allChunks()` when all we need is the reverse-map join key.
     ///
-    /// Because the chunks table is append-only there are no tombstoned rows in the
-    /// strict sense; "non-tombstoned" here means the same filtering contract
-    /// `activeChunks()` applies — callers combine this result with
-    /// `RemovedSourceStore.removedIDs()` to exclude removed sources. Ordering is
-    /// unspecified (the join key lookup is O(1) per UUID regardless of order).
+    /// "Non-tombstoned" here means the same filtering contract `activeChunks()`
+    /// applies — callers combine this result with `RemovedSourceStore.removedIDs()`
+    /// to exclude removed sources. Ordering is unspecified (the join key lookup
+    /// is O(1) per UUID regardless of order).
     public func chunkSourcePairs() async throws -> [(id: UUID, sourceID: String)] {
         // Query with an empty orderBy to avoid the HLC-ordered full scan that
         // allChunks() uses — we only need the two key columns, not body or ordering.
@@ -470,6 +473,36 @@ public actor BundleStore {
             asOf: asOf
         )
         return rows.compactMap(Self.decodeChunk)
+    }
+
+    // MARK: - Hard-delete erasure (secfix/ws2-coredelete)
+
+    /// Zero the verbatim text of every chunk belonging to `sourceID`.
+    ///
+    /// This is the corpus layer's contribution to the hard-delete destruction
+    /// contract: `CorpusKit.remove(sourceID:)` removes a source from recall
+    /// (invertedIndex, vectorStore, removedSourceStore) but leaves the verbatim
+    /// chunk text rows in SQLite. `scrubText` performs the actual erasure —
+    /// UPDATE `chunks` SET `text` = "" WHERE `source_id` = sourceID.
+    ///
+    /// Called by `CorpusKit.expunge(sourceID:)` as part of the two-phase
+    /// expunge flow: scrub first, then remove. Callers that only want to
+    /// suppress recall without erasing content continue to use `remove`.
+    ///
+    /// The update bypasses the `HashingRowStore` wrapper intentionally — the
+    /// content_hash column is left stale after scrubbing (the hash no longer
+    /// matches the empty text). This is acceptable: the row is being destroyed;
+    /// the Merkle chain accuracy of a destroyed corpus is not a requirement.
+    ///
+    /// - Parameter sourceID: the source to scrub.
+    /// - Returns: the number of chunk rows whose text was zeroed.
+    @discardableResult
+    public func scrubText(sourceID: String) async throws -> Int {
+        try await storage.rowStore.update(
+            table: "chunks",
+            values: ["text": .text("")],
+            where: .eq(Column(table: "chunks", name: "source_id"), .text(sourceID))
+        )
     }
 
     // MARK: - Per-corpus Merkle root (NT-C1 Part 3)
@@ -568,6 +601,30 @@ public actor BundleStore {
             childHashes.append((corpusId, ContentHash(bytes: rootBytes)))
         }
         return MerkleHash.interior(childHashes: childHashes)
+    }
+
+    // MARK: - Upgrade backfill
+
+    /// Recompute Merkle roots for all existing corpora.
+    ///
+    /// Called on every `Corpus.init` after schema migration to backfill any
+    /// existing chunks that were inserted before the `corpus_metadata` table
+    /// was introduced (schema v3). Without this call, `globalCorpusMerkleRoot`
+    /// returns `MerkleRoot.empty` for any estate that was upgraded from v2,
+    /// even though chunks exist (WS2-F3).
+    ///
+    /// The operation is idempotent: if `corpus_metadata` rows already exist,
+    /// re-rolling the hash is a harmless upsert. For large corpora this adds
+    /// a one-time startup cost; for typical estates (tens of thousands of
+    /// chunks) the cost is sub-second and not repeated after the first run.
+    func recomputeAllCorpusMerkleRoots() async throws {
+        // Collect all distinct source_ids from the chunks table. This includes
+        // sources that may not yet have a corpus_metadata row (pre-v3 estates).
+        let sourceIDs = try await allSourceIDs()
+        for sourceID in sourceIDs {
+            // rollupCorpusMerkleRoot is idempotent: upsert on conflict.
+            try await rollupCorpusMerkleRoot(sourceID: sourceID)
+        }
     }
 
     // MARK: - Decode

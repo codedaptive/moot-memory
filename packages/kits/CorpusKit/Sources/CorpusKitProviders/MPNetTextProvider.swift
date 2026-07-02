@@ -5,8 +5,8 @@
 // are distinct from MiniLM's. CoreML inference closure injected
 // by the host app.
 //
-// Conforms to VectorKit.EmbeddingProvider. Tokenizer held as a
-// private impl detail (see MiniLMTextProvider for the rationale).
+// Conforms to VectorKit.EmbeddingProvider. The stored tokenizer
+// property is public, matching the initializer's public injection seam.
 
 import Foundation
 import SubstrateTypes

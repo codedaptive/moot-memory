@@ -25,7 +25,8 @@ use std::sync::Arc;
 const NOW: i64 = 1_700_000_000;
 
 /// Build a fresh estate on an in-memory store (no disk I/O needed for
-/// capture-into-wing; the assertions are on the returned Drawer alone).
+/// capture-into-wing; tests assert wing/room placement through the
+/// node tree via `resolve_node_names`, not only on the returned Drawer).
 fn make_estate() -> Estate {
     let store = Arc::new(InMemoryDrawerStore::new(NOW, None).unwrap());
     Estate::create(store, OwnerCredentials::new("wing-test-owner"), None).unwrap()

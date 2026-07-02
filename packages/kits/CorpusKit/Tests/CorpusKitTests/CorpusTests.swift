@@ -372,17 +372,21 @@ struct CorpusTests {
     }
 
     /// T4 (ADR-021 Decision 7): a file-backed (SQLite) estate persists the Corpus
-    /// ingest queue to the shared encrypted `queue.sqlite` BESIDE the estate — not
-    /// a plaintext maildir. Proven by:
-    ///   1. `queue.sqlite` appears as a regular FILE beside the estate db.
+    /// ingest queue to a per-estate SQLite file BESIDE the estate — not a plaintext
+    /// maildir. The sibling filename is `<estate-stem>.queue.sqlite` so two estates
+    /// in the same directory never share a queue. Proven by:
+    ///   1. `<estate-stem>.queue.sqlite` appears as a regular FILE beside the estate db.
     ///   2. No `corpus_ingest_queue/` maildir is created (old FilesystemBackend path is gone).
-    ///   3. The enqueued document is searchable via the shared queue path.
+    ///   3. The enqueued document is searchable via the per-estate queue path.
     @Test func ingestQueueIsDurableForSQLiteEstate() async throws {
         try await GlobalTestLock.shared.withLock {
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("corpuskit-queue-\(UUID().uuidString).sqlite3")
+            // Derive the per-estate sibling path the same way EstateConfiguration does:
+            // <dir>/<estate-stem>.queue.sqlite — guarantees cross-estate isolation.
+            let stem = url.deletingPathExtension().lastPathComponent
             let queueSibling = url.deletingLastPathComponent()
-                .appendingPathComponent("queue.sqlite")
+                .appendingPathComponent("\(stem).queue.sqlite")
             let oldMaildir = url.deletingLastPathComponent()
                 .appendingPathComponent("corpus_ingest_queue")
             defer {
@@ -404,7 +408,7 @@ struct CorpusTests {
             )
             try await corpus.awaitIngestDrain()
 
-            // T4: the shared queue.sqlite must exist as a regular file (not a directory).
+            // T4: the per-estate queue file must exist as a regular file (not a directory).
             var isDir: ObjCBool = false
             #expect(FileManager.default.fileExists(atPath: queueSibling.path, isDirectory: &isDir))
             #expect(!isDir.boolValue)  // must be a file, not a directory

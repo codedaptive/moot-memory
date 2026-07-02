@@ -86,12 +86,10 @@ pub trait EmbeddingProvider: Send + Sync {
     /// inference twice per chunk. Providers that compute-then-project SHOULD
     /// override this to run the inference ONCE and return both outputs.
     ///
-    /// Returns `(engram, floats)`; `floats` is empty when the provider opts out
-    /// of the float lane (binary-only) or for empty/unresolved input — identical
-    /// to the `embed_float` opt-out contract. The default runs two passes and
-    /// swallows a float-lane opt-out to `vec![]`, matching the ingest call site,
-    /// so it is behaviour-identical to the pre-migration two-call code. The Swift
-    /// `EmbeddingProvider` protocol carries the identical `embedPair` rule.
+    /// Returns `(engram, floats)`; `floats` is `vec![]` when `embed_float`
+    /// returns any error — including structural opt-out, vocab miss, or
+    /// provider inference failure. The Swift `EmbeddingProvider` protocol
+    /// carries the identical `embedPair` rule.
     fn embed_pair(&self, text: &str) -> Result<(Engram, Vec<f32>), VectorKitError> {
         let engram = self.embed(text)?;
         let floats = self.embed_float(text).unwrap_or_default();

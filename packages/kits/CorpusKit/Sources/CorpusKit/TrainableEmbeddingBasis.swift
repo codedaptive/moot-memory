@@ -113,7 +113,9 @@ public protocol TrainableEmbeddingBasis: AnyObject, Sendable {
     // O(N·vocab) over an import — the very wall this change set removes. The
     // provider accumulates in memory; `Corpus` snapshots via `serializeCounts()`
     // when a batch closes and on shutdown points, and `restoreCounts(from:)`
-    // resumes that snapshot on open.
+    // resumes that snapshot on open. NOTE: the maintained-counts path is
+    // infrastructure only; Corpus.reindex currently still trains from active
+    // chunk text via trainOnCorpus(texts:), not from these maintained counts.
 
     /// Fold one chunk's raw text into the maintained accumulated counts.
     ///

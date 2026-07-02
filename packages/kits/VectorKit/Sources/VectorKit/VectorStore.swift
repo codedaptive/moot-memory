@@ -2,7 +2,7 @@
 //
 // Storage layer for VectorKit, backed by PersistenceKit.
 //
-// Schema (Lane F multi-vector target — fresh CREATE TABLE):
+// Schema (version 3, with `ext` JSON slot added post-Lane F):
 // ```
 // vectors (
 //   id             UUID PRIMARY KEY,
@@ -14,18 +14,12 @@
 //   dim            INTEGER NOT NULL DEFAULT 256,
 //   payload        BLOB NOT NULL,               -- 32 bytes for binary; dim*4 for float32
 //   scale          REAL,                        -- int8 dequant scale; NULL otherwise
-//   filed_at       TIMESTAMP NOT NULL
+//   filed_at       TIMESTAMP NOT NULL,
+//   ext            TEXT                         -- ADR-012 JSON extension slot
 // )
 // UNIQUE(item_id, vector_index, model_id)
 // INDEX(model_id, item_id)
 // ```
-//
-// The column is named `item_id` (not `drawer_id`). This is the Lane F
-// rename called out in arch spec §4.1: a column alias over `drawer_id`
-// creates latent contract drift; the column name and the field name must
-// agree. The rename is in scope for Lane F per the blast-radius analysis
-// (VectorStore and CorpusKit's chunk.id==item_id join are the only two
-// sites, both updated here in the same mission).
 //
 // DECISION_KIT_GRAPH_REFACTOR_2026-05-19.md section 4.6: replaced
 // direct SQLite I/O with PersistenceKit's RowStore + BlobStore
@@ -78,6 +72,23 @@ import Foundation
 import IntellectusLib
 import OSLog
 import PersistenceKit
+
+/// Logical position key for resident-array slot matching.
+///
+/// The resident binary array can accumulate multiple slots for the same
+/// logical position (itemID, vectorIndex, modelID) when modelVersion changes
+/// across upserts: the table's UNIQUE constraint (item_id, vector_index,
+/// model_id) collapses to one row, but the in-memory array retains a slot
+/// per unique VectorRecordKey — which includes modelVersion. Using logical
+/// position rather than full VectorRecordKey equality allows replacement
+/// detection and deletion to cover stale modelVersion slots.
+/// (secfix/ws2-coredelete: hard-delete destruction contract)
+struct VKLogicalPos: Hashable {
+    let itemID: String
+    let vectorIndex: UInt32
+    let modelID: String
+}
+
 // ─────────────────────────────────────────────────────────────────
 // DO NOT REIMPLEMENT SUBSTRATE MATH.
 //
@@ -97,9 +108,10 @@ import PersistenceKit
 /// Concurrency: VectorStore is an actor. RowStore calls are async;
 /// the public API mirrors PersistenceKit's async surface.
 ///
-/// Schema version 2: multi-vector, `item_id` renamed from `drawer_id`,
-/// adds `vector_index`, `kind`, `dim`, `scale`, renames `engram`→`payload`.
-/// Built fresh — no migration path (no production data exists at the
+/// Schema version 3: current production schema. Version 2 added
+/// multi-vector support, `item_id`, `vector_index`, `kind`, `dim`,
+/// `scale`, and `payload`; version 3 added the `ext` JSON slot per
+/// ADR-012.
 ///
 /// Hot-path: findNearest dispatches through a DenseIndex seam. Below
 /// `mihThreshold` binary vectors the active index is BruteForceIndex
@@ -219,7 +231,26 @@ public actor VectorStore {
     /// to the array store instead and this stays empty.) The persistent path is
     /// the natural home for a sidecar; until one is wired, the resident array is
     /// memory-only, so deferral lives here too.
+    ///
+    /// Bound: capped at `deferredPendingLimit` records. When a `addPayloads` call
+    /// in deferred memory-only mode would push the buffer past the cap, an
+    /// intermediate flush (`_flushDeferredPending()`) merges the accumulated
+    /// records into the resident index and clears the buffer before continuing.
+    /// This bounds peak RAM use during a long burst and prevents DoS / OOM when
+    /// callers hold the deferred window open indefinitely.
+    /// (secfix/punt-vector: unbounded deferred buffer fix)
     private var deferredPendingRecords: [(key: VectorRecordKey, bytes: [UInt8])] = []
+
+    /// Maximum number of records that `deferredPendingRecords` may hold before
+    /// an intermediate flush is triggered (memory-only deferred path only).
+    ///
+    /// Default is 50_000 — matches the default MIH threshold; at this scale
+    /// the resident array justifies a rebuild and the buffer's RAM footprint
+    /// (~50k × (key + 32 bytes) ≈ ~6 MB) is bounded to a safe level.
+    /// Configurable at init time (via `deferredPendingLimit:` parameter) so
+    /// tests can set a small value to exercise the flush path quickly without
+    /// flooding the index with production-scale record counts.
+    private let deferredPendingLimit: Int
 
     // MARK: - Float lane (Lane D) resident scan
 
@@ -387,12 +418,14 @@ public actor VectorStore {
         storage: any Storage,
         sidecarURL: URL? = nil,
         mihThreshold: UInt32 = 50_000,
-        mihBandCount: MIHBandCount = .m16
+        mihBandCount: MIHBandCount = .m16,
+        deferredPendingLimit: Int = 50_000
     ) {
-        self.storage       = storage
-        self.mihThreshold  = mihThreshold
-        self.mihBandCount  = mihBandCount
-        self.arrayStore    = sidecarURL.map { ResidentArrayStore(sidecarURL: $0) }
+        self.storage               = storage
+        self.mihThreshold          = mihThreshold
+        self.mihBandCount          = mihBandCount
+        self.arrayStore            = sidecarURL.map { ResidentArrayStore(sidecarURL: $0) }
+        self.deferredPendingLimit  = deferredPendingLimit
         // Allocate both index actors once; hotIndex starts as brute-force
         // (correct for the empty / pre-threshold state).
         let bf  = BruteForceIndex()
@@ -516,31 +549,53 @@ public actor VectorStore {
             )
 
             // Determine whether this is a new slot (insert) or a replacement
-            // (upsert over an existing key). Only new slots change the live count.
-            // We check before the write to capture the pre-mutation state.
+            // (upsert over an existing logical position). Only new slots change
+            // the live count. We match by (itemID, vectorIndex, modelID) only —
+            // NOT by full VectorRecordKey — so a changed modelVersion is still
+            // recognised as a replacement and the stale slot is tombstoned.
+            // Matching by full key would leave stale modelVersion slots live in
+            // the resident array (secfix/ws2-coredelete: hard-delete contract).
             let preMutationSnap = await bruteForceIndex.currentSnapshot()
-            let isReplacement = preMutationSnap.keys.indices.contains {
-                !preMutationSnap.isTombstoned($0) && preMutationSnap.keys[$0] == key
+            let staleSlotKeys: [VectorRecordKey] = preMutationSnap.keys.indices.compactMap { i in
+                guard !preMutationSnap.isTombstoned(i) else { return nil }
+                let k = preMutationSnap.keys[i]
+                guard k.itemID == itemID,
+                      k.vectorIndex == vectorIndex,
+                      k.modelID == modelID else { return nil }
+                return k
             }
+            let isReplacement = !staleSlotKeys.isEmpty
 
             let vectorPayload = VectorPayload(kind: .binary, dim: 256, bytes: payload.bytes)
             if let store = arrayStore {
-                // Sidecar path (write-behind): tombstone any prior slot for
-                // this key in memory, append the new slot in memory, and mark
-                // the sidecar dirty — NO whole-sidecar rewrite per write
-                // (TASK #24). Both indexes are updated INCREMENTALLY (the MIH
-                // add is O(m); the brute-force add appends one slot) so there
-                // is no per-write full-index rebuild either. The sidecar is
-                // persisted at the next quiesce point via flush(); crash safety
-                // is preserved by the table-rebuild path (the `vectors` table
-                // is the durable source — see VectorStore header HOT-PATH note).
-                await store.tombstoneDeferred(keys: [key])
+                // Sidecar path (write-behind): tombstone ALL prior slots for
+                // this logical position (itemID, vectorIndex, modelID) — this
+                // covers stale modelVersion slots that tombstoneDeferred([key])
+                // would miss when modelVersion changed. Then append the new slot
+                // and update both indexes incrementally. The sidecar is persisted
+                // at the next quiesce point via flush(); crash safety is preserved
+                // by the table-rebuild path (the `vectors` table is the durable
+                // source — see VectorStore header HOT-PATH note).
+                await store.tombstoneDeferred(keys: Set(staleSlotKeys))
                 try await store.appendDeferred(key: key, bytes: payload.bytes)
+                // Remove stale slots from both indexes before adding the new slot.
+                // BruteForceIndex.add only tombstones exact-key matches; calling
+                // remove() first covers stale modelVersion cases.
+                for staleKey in staleSlotKeys {
+                    try await bruteForceIndex.remove(key: staleKey)
+                    try await mihIndex.remove(key: staleKey)
+                }
                 try await bruteForceIndex.add(key: key, vector: vectorPayload)
                 try await mihIndex.add(key: key, vector: vectorPayload)
             } else {
-                // Memory-only path: BruteForceIndex.add tombstones the
-                // existing slot and appends the new one (actor-serialised).
+                // Memory-only path: remove all prior slots for this logical
+                // position before adding the new one. BruteForceIndex.add's
+                // built-in tombstoning only covers exact-key matches (same
+                // modelVersion); stale slots require explicit remove() calls.
+                for staleKey in staleSlotKeys {
+                    try await bruteForceIndex.remove(key: staleKey)
+                    try await mihIndex.remove(key: staleKey)
+                }
                 try await bruteForceIndex.add(key: key, vector: vectorPayload)
                 // Keep MIHIndex in sync via incremental add/update.
                 try await mihIndex.add(key: key, vector: vectorPayload)
@@ -699,42 +754,76 @@ public actor VectorStore {
                 deferredLiveKeys = live
                 liveBinaryCount += newKeyCount
                 deferredIndexDirty = true
-                // Indexes intentionally NOT rebuilt and _selectIndex NOT called:
-                // publishResidentIndex() does both once when the burst ends.
+                // Back-pressure (memory-only path): if the buffer has grown past
+                // the cap, flush it now to prevent unbounded RAM growth.
+                // The intermediate flush merges all accumulated records into the
+                // resident index in one pass, clears the buffer, reseeds
+                // deferredLiveKeys from the new snapshot, and recomputes
+                // liveBinaryCount — while keeping deferredIndexActive = true
+                // so the burst continues uninterrupted for the caller.
+                // This bounds peak RAM to roughly deferredPendingLimit × record
+                // size regardless of how many addPayloads calls are made within
+                // one deferred window.
+                if arrayStore == nil && deferredPendingRecords.count > deferredPendingLimit {
+                    await _flushDeferredPending()
+                }
+                // Indexes intentionally NOT rebuilt and _selectIndex NOT called
+                // here: publishResidentIndex() (or the next intermediate flush)
+                // does both once.
             } else {
                 // Immediate path (default — single captures and every direct
                 // caller): rebuild both indexes once from the final snapshot.
                 //
                 // Determine which keys in the batch replace a live slot (so the
-                // live count only grows by the number of genuinely new keys).
+                // live count only grows by the number of genuinely new logical
+                // positions). Match by (itemID, vectorIndex, modelID), NOT by
+                // full VectorRecordKey, so a changed modelVersion is still
+                // recognised as a replacement (secfix/ws2-coredelete).
                 let preSnap = await bruteForceIndex.currentSnapshot()
-                var liveKeys = Set<VectorRecordKey>()
+
+                // Build a map from logical position to all live full keys at
+                // that position (may include stale modelVersion slots).
+                var liveByPos: [VKLogicalPos: Set<VectorRecordKey>] = [:]
                 for i in 0..<Int(preSnap.count) where !preSnap.isTombstoned(i) {
-                    liveKeys.insert(preSnap.keys[i])
+                    let k = preSnap.keys[i]
+                    let pos = VKLogicalPos(itemID: k.itemID, vectorIndex: k.vectorIndex, modelID: k.modelID)
+                    liveByPos[pos, default: []].insert(k)
                 }
-                // A key already live in the array, OR repeated earlier in this
-                // batch, is a replacement — it must not double-count.
-                var seenInBatch = Set<VectorRecordKey>()
+
+                // Count genuinely new logical positions.
+                var seenPosInBatch = Set<VKLogicalPos>()
                 var newKeyCount: UInt32 = 0
                 for k in batchKeys {
-                    let isNew = !liveKeys.contains(k) && !seenInBatch.contains(k)
+                    let pos = VKLogicalPos(itemID: k.itemID, vectorIndex: k.vectorIndex, modelID: k.modelID)
+                    let isNew = liveByPos[pos] == nil && !seenPosInBatch.contains(pos)
                     if isNew { newKeyCount += 1 }
-                    seenInBatch.insert(k)
+                    seenPosInBatch.insert(pos)
+                }
+
+                // Collect ALL live keys that the batch covers (including stale
+                // modelVersion slots that exact-key intersection would miss).
+                let batchPositions = Set(batchKeys.map {
+                    VKLogicalPos(itemID: $0.itemID, vectorIndex: $0.vectorIndex, modelID: $0.modelID)
+                })
+                var allStaleKeys = Set<VectorRecordKey>()
+                for pos in batchPositions {
+                    if let stale = liveByPos[pos] { allStaleKeys.formUnion(stale) }
                 }
 
                 if let store = arrayStore {
-                    // Tombstone every replaced key in one pass, append the whole
-                    // batch in one pass, write the sidecar once.
-                    let replacedKeys = Set(batchKeys).intersection(liveKeys)
-                    await store.tombstoneDeferred(keys: replacedKeys)
+                    // Tombstone every replaced full key in one pass (including
+                    // stale modelVersion slots), append the whole batch in one
+                    // pass, write the sidecar once.
+                    await store.tombstoneDeferred(keys: allStaleKeys)
                     try await store.appendBatch(records: binaryRecords)
                     // Rebuild both indexes ONCE from the final snapshot.
                     let snap = await store.snapshot()
                     await bruteForceIndex.build(from: snap)
                     await mihIndex.build(from: snap)
                 } else {
-                    // Memory-only: append the batch to the current snapshot in
-                    // one pass, then build both indexes once.
+                    // Memory-only: merge batch into snapshot. mergeBatchIntoSnapshot
+                    // uses logical-position tombstoning to cover stale modelVersion
+                    // slots, then build both indexes once.
                     let merged = Self.mergeBatchIntoSnapshot(
                         snapshot: preSnap,
                         records: binaryRecords
@@ -840,6 +929,38 @@ public actor VectorStore {
         _selectIndex()
     }
 
+    /// Intermediate flush for the memory-only deferred buffer.
+    ///
+    /// Called when `deferredPendingRecords` exceeds `deferredPendingLimit` during
+    /// a deferred burst. Merges the accumulated records into the resident index in
+    /// one pass, clears the buffer, reseeds `deferredLiveKeys` from the resulting
+    /// snapshot, and recomputes `liveBinaryCount`. `deferredIndexActive` is kept
+    /// `true` so the caller's burst window continues uninterrupted — this is an
+    /// internal back-pressure valve, not an end of burst.
+    ///
+    /// Not called for the sidecar path: with a sidecar, records are staged into
+    /// `arrayStore` immediately (no in-memory buffer to flush).
+    private func _flushDeferredPending() async {
+        guard !deferredPendingRecords.isEmpty else { return }
+        let pending = Self.dedupLastWins(deferredPendingRecords)
+        deferredPendingRecords = []
+        let cur = await bruteForceIndex.currentSnapshot()
+        let merged = Self.mergeBatchIntoSnapshot(snapshot: cur, records: pending)
+        await bruteForceIndex.build(from: merged)
+        await mihIndex.build(from: merged)
+        // Recompute live count and reseed the live-key set authoritatively from
+        // the flushed snapshot so subsequent replacement detection remains correct.
+        var liveCount: UInt32 = 0
+        var liveKeys = Set<VectorRecordKey>()
+        for i in 0..<Int(merged.count) where !merged.isTombstoned(i) {
+            liveCount += 1
+            liveKeys.insert(merged.keys[i])
+        }
+        liveBinaryCount = liveCount
+        deferredLiveKeys = liveKeys
+        // deferredIndexActive stays true, deferredIndexDirty stays true.
+    }
+
     /// Keep only the last occurrence of each key, preserving first-seen order of
     /// the survivors. Used to collapse a memory-only deferral buffer before the
     /// single merge, since `mergeBatchIntoSnapshot` appends every record (two
@@ -883,10 +1004,21 @@ public actor VectorStore {
         snapshot: ResidentVectorArray,
         records: [(key: VectorRecordKey, bytes: [UInt8])]
     ) -> ResidentVectorArray {
-        let replaced = Set(records.map(\.key))
+        // Tombstone any live slot whose logical position (itemID, vectorIndex,
+        // modelID) matches a record in the batch, including stale modelVersion
+        // slots. Matching by full VectorRecordKey would miss stale modelVersion
+        // slots and leave ghost copies in the resident array
+        // (secfix/ws2-coredelete: hard-delete destruction contract).
+        let replacedPositions = Set(records.map {
+            VKLogicalPos(itemID: $0.key.itemID, vectorIndex: $0.key.vectorIndex, modelID: $0.key.modelID)
+        })
         var newTombstones = snapshot.tombstones
-        for slotIdx in 0..<Int(snapshot.count) where replaced.contains(snapshot.keys[slotIdx]) {
-            ResidentArrayStore.setTombstoneBit(&newTombstones, slot: slotIdx)
+        for slotIdx in 0..<Int(snapshot.count) {
+            let k = snapshot.keys[slotIdx]
+            let pos = VKLogicalPos(itemID: k.itemID, vectorIndex: k.vectorIndex, modelID: k.modelID)
+            if replacedPositions.contains(pos) {
+                ResidentArrayStore.setTombstoneBit(&newTombstones, slot: slotIdx)
+            }
         }
 
         var newStorage = snapshot.storage
@@ -1590,12 +1722,17 @@ public actor VectorStore {
     }
 
     /// Remove one (itemID, vectorIndex, modelID) row from the table and
-    /// tombstone the matching slot in both resident indexes.
+    /// tombstone ALL matching slots in both resident indexes.
     ///
     /// The modelVersion is not available at the call site; we scan the
-    /// brute-force array snapshot to find the full VectorRecordKey (which
-    /// includes modelVersion) before tombstoning. One snapshot scan per
-    /// delete call — not per findNearest query.
+    /// brute-force array snapshot to find ALL live VectorRecordKeys that
+    /// match (itemID, vectorIndex, modelID). Multiple slots can accumulate
+    /// in the resident array when modelVersion changes across upserts: the
+    /// table UNIQUE constraint (item_id, vector_index, model_id) collapses
+    /// them to one row, but the resident array retains a slot per modelVersion
+    /// until the stale slot is explicitly tombstoned. Every slot must be
+    /// tombstoned on delete so no in-memory copy of the deleted vector survives
+    /// (hard-delete destruction contract — secfix/ws2-coredelete).
     private func _deleteAndTombstone(
         itemID: String,
         vectorIndex: UInt32,
@@ -1620,8 +1757,13 @@ public actor VectorStore {
         // when the array is first built on the next findNearest call.
         guard indexBuilt else { return }
 
-        // Iterate the brute-force array (backing store for both indexes).
+        // Scan ALL slots in the brute-force array for this logical position.
+        // Multiple live slots can exist when modelVersion changed across upserts
+        // (stale modelVersion accumulation). Every matching slot must be
+        // tombstoned so no in-memory copy survives the delete.
+        // Do NOT break after the first match.
         let snap = await bruteForceIndex.currentSnapshot()
+        var tombstonedCount = 0
         for slotIdx in 0..<Int(snap.count) {
             guard !snap.isTombstoned(slotIdx) else { continue }
             let k = snap.keys[slotIdx]
@@ -1634,10 +1776,13 @@ public actor VectorStore {
             // Remove from both indexes so both stay coherent.
             try await bruteForceIndex.remove(key: k)
             try await mihIndex.remove(key: k)
-            // (itemID, vectorIndex, modelID) is UNIQUE in the table; one match max.
-            liveBinaryCount = liveBinaryCount > 0 ? liveBinaryCount - 1 : 0
+            tombstonedCount += 1
+        }
+        if tombstonedCount > 0 {
+            liveBinaryCount = liveBinaryCount > UInt32(tombstonedCount)
+                ? liveBinaryCount - UInt32(tombstonedCount)
+                : 0
             _selectIndex()
-            break
         }
     }
 
@@ -1657,8 +1802,16 @@ public actor VectorStore {
     /// See VECTORKIT_SPEC §I-4a.
     static func decodePayload(from row: StorageRow) -> VectorPayload? {
         guard case let .int(kindRaw) = row["kind"] ?? .null,
+              // Guard the narrowing conversion UInt8(kindRaw): SQLite columns are
+              // Int64, so a hand-crafted row can carry any Int64 value. Converting
+              // a negative or > 255 value to UInt8 traps in Swift. Reject the row
+              // rather than crash.
+              kindRaw >= 0, kindRaw <= 255,
               let kind = VectorKind(rawValue: UInt8(kindRaw)),
               case let .int(dim) = row["dim"] ?? .null,
+              // Guard the narrowing conversion UInt32(dim): a negative dim from a
+              // malformed row traps. Reject rather than crash.
+              dim >= 0,
               case let .blob(bytes) = row["payload"] ?? .null else {
             return nil
         }
@@ -1688,6 +1841,10 @@ public actor VectorStore {
         guard case let .uuid(id) = row["id"] ?? .null,
               case let .text(itemID) = row["item_id"] ?? .null,
               case let .int(vectorIndex) = row["vector_index"] ?? .null,
+              // Guard the narrowing conversion UInt32(vectorIndex): a negative
+              // vector_index in a malformed row traps. Reject the row rather
+              // than crash.
+              vectorIndex >= 0,
               case let .text(modelID) = row["model_id"] ?? .null,
               case let .text(modelVersion) = row["model_version"] ?? .null,
               case let .timestamp(filedAt) = row["filed_at"] ?? .null else {

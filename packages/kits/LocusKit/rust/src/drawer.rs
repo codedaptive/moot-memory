@@ -23,9 +23,9 @@
 //!
 //! ## Swift-to-Rust shape changes
 //!
-//! - `Date filedAt` → `i64 filed_at` (epoch seconds). Matches the
+//! - `Date filedAt` → `i64 filed_at` (epoch milliseconds, ADR-023). Matches the
 //!   leaf-type convention documented in `audit_types.rs` / `manifest.rs`:
-//!   the Rust port stores timestamps as i64 epoch seconds and the
+//!   the Rust port stores timestamps as i64 epoch milliseconds and the
 //!   persistence-kit `TypedValue::Timestamp(i64)` carries them on the wire.
 //!   The Swift port uses `Date` because the storage layer there hands
 //!   back `Date`; both legs agree on the canonical wire shape (ISO8601
@@ -110,18 +110,19 @@ pub struct Drawer {
     /// produce) the vector for this drawer.
     pub embedding_model_id: String,
 
-    /// When this drawer was tombstoned, if it has been. Reserved for
-    /// the Rev 2.0 soft-delete workflow; always None at Rev 1.0.
+    /// When this drawer was tombstoned, if it has been. Written by
+    /// expunge/tombstone paths; `None` while the drawer is active.
     pub tombstoned_at: Option<i64>,
 
     /// Batch identifier used for receipt-based rollback of a tombstone.
     /// Reserved for the Rev 2.0 soft-delete workflow.
     pub removed_by_batch: Option<String>,
 
-    /// Provenance bitmap encoding source_type, confirmation, confidence,
-    /// channel, and sensitivity per Q1_DECISION_PROVENANCE_BITMAP.md.
-    /// See `provenance.rs` for the five axis enums and the accessor
-    /// methods below for type-safe decoding.
+    /// Provenance bitmap encoding source type, channel, provenance capture
+    /// channel, confirmation, confidence, sensitivity, and enrichment
+    /// status per Q1_DECISION_PROVENANCE_BITMAP.md. See `provenance.rs`
+    /// for the axis enums and the accessor methods below for type-safe
+    /// decoding.
     pub provenance: i64,
 
     /// Adjective bitmap encoding state, sensitivity, exportability, and
@@ -129,9 +130,10 @@ pub struct Drawer {
     pub adjective_bitmap: i64,
 
     /// Operational bitmap encoding capture channel, content kind,
-    /// feature flags, and the state-extension flag per spec § 5.6. See
-    /// `drawer_operational.rs` for the two enums, the feature-flag
-    /// bitset constants, and the accessor methods.
+    /// feature flags, the lineage-clustering bit, and the
+    /// state-extension flag per spec § 5.6. See `drawer_operational.rs`
+    /// for the enums, the feature-flag bitset constants, and the accessor
+    /// methods.
     pub operational_bitmap: i64,
 
     /// UDC (Universal Decimal Classification) code locating this

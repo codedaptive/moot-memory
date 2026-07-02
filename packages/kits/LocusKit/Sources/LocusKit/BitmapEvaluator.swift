@@ -27,8 +27,8 @@ import SubstrateTypes
 ///    did not constrain those concerns. Confirmation is not defaulted:
 ///    unconfirmed captures are recallable unless the caller explicitly
 ///    asks for `.userConfirmed`. Tombstone exclusion is always
-///    enforced and is independent of the chain (state == 9 rejected
-///    at the bitmap tier).
+///    enforced and is independent of the chain (`State.tombstoned`
+///    raw 33 is rejected at the bitmap tier).
 /// 2. Bitmap-tier evaluation (§ 7.9.2 / § 7.9.3) — each Filter case
 ///    compiles to a predicate over `(adjectiveBitmap,
 ///    operationalBitmap, provenance)` and is applied via

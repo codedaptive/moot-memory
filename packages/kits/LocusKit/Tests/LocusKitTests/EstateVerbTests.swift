@@ -3,7 +3,7 @@ import SubstrateTypes
 import Foundation
 @testable import LocusKit
 
-@Suite("Estate verb tests — capture, withdraw, recall, stubs")
+@Suite("Estate verb tests — capture, withdraw, recall, mutate, learn")
 struct EstateVerbTests {
 
     /// Build a fresh estate on a unique temp path.

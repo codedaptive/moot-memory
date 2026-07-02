@@ -9,10 +9,11 @@ import Testing
 /// `docs/specs/GENIUSLOCUS_ARCHITECTURE_SPEC_v0.35.md` I-3, § 6.6, § 9.5.
 ///
 /// Storage can represent the combination; the verb layer must not
-/// produce it. Both write paths — `insertDrawerRow` (capture) and
-/// `mutateAdjective` — must throw `LocusKitError.disciplineViolation`
-/// before the BEGIN IMMEDIATE transaction opens, leaving the database
-/// untouched on violation. Adjacent legal combinations
+/// produce it. Both write paths — `addDrawer` (capture) and
+/// `mutateAdjective` — must throw `LocusKitError.invalidContent`
+/// (via the AuditGate basis check), leaving the database untouched
+/// on violation. The standalone validator throws
+/// `LocusKitError.disciplineViolation`. Adjacent legal combinations
 /// (elevated+exportable, restricted+exportable, secret-alone,
 /// exportable-alone) must remain unaffected.
 @Suite("ForbiddenCombinationTests")

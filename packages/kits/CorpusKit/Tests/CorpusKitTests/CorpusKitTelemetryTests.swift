@@ -88,13 +88,13 @@ private final class CapturingSink: StatsSink, @unchecked Sendable {
 
 // MARK: - Helper: fresh storage
 
-/// Creates fresh InMemory-backed storage for each test.
+/// Creates a fresh SQLite-backed storage for each test (via makeScratchStorage()).
 private func makeFreshStorage() async throws -> any Storage {
     let storage = try makeScratchStorage()
     return storage
 }
 
-/// Creates a fresh BundleStore against InMemory storage.
+/// Creates a fresh BundleStore against SQLite-backed storage (via makeFreshStorage()).
 private func makeFreshBundleStore() async throws -> BundleStore {
     let storage = try await makeFreshStorage()
     try await storage.migrate(to: BundleStore.schemaDeclaration)

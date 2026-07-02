@@ -5,9 +5,10 @@
 //! CORPUSKIT_REPORT_001 (cp-corpuskit-report): added IntellectusLib
 //! self-report telemetry to `insert`. The `report!` macro calls are
 //! placed at the operation boundary, after the batch completes,
-//! so storage behaviour is unchanged. When monitoring is disabled
-//! (the default), the macro expands to a single `AtomicBool::load +
-//! branch` — zero allocation, no clock.
+//! so storage behaviour is unchanged. `insert` unconditionally reads
+//! SystemTime::now() for start_ts, now_secs per chunk, and end_ts
+//! before the `report!` calls; the disabled-monitoring path does not
+//! short-circuit these clock reads.
 
 use crate::chunk::Chunk;
 use crate::error::{CorpusKitError, CorpusKitResult};
@@ -135,7 +136,10 @@ impl BundleStore {
                 ],
                 vec!["id".to_string()],
             )
-            .append_only()
+            // append_only removed (secfix/ws2-coredelete): chunks table must be
+            // updatable so scrub_text() can zero verbatim text on expunge.
+            // The idempotent insert path is unaffected — duplicate-key rejection
+            // happens at the primary-key constraint level, not via triggers.
             .hashable(),
             // Per-corpus Merkle root: MerkleHash::interior over the
             // content_hashes of all chunks sharing a source_id.
@@ -201,18 +205,26 @@ impl BundleStore {
         storage
             .open(&schema)
             .map_err(|e| CorpusKitError::StoreUnavailable(e.to_string()))?;
-        Ok(BundleStore::new(storage))
+        let store = BundleStore::new(storage);
+        // WS2-F3: backfill corpus_metadata rows for any existing chunks.
+        // After a v2→v3 schema upgrade the corpus_metadata table is empty
+        // even though chunks exist; global_corpus_merkle_root() would return
+        // EMPTY until the next insert triggered rollup_corpus_merkle_root.
+        // This call is idempotent (upsert on conflict) and runs once at open.
+        store.recompute_all_corpus_merkle_roots()?;
+        Ok(store)
     }
 
     /// Insert a batch of chunks. Idempotent on primary key:
-    /// re-inserting a chunk with the same id is a no-op. The chunks
-    /// table is append-only, so the idempotent path is a plain insert
-    /// that tolerates a duplicate-key rejection rather than an upsert.
-    /// An upsert would compile to an update on conflict, which the
-    /// append-only triggers reject; a plain insert hits the primary
-    /// key instead and surfaces StorageError::DuplicateKey, caught
-    /// here as the documented no-op. The first write of a given id
-    /// wins; chunks are immutable and content-addressed.
+    /// re-inserting a chunk with the same id is a no-op. The idempotent
+    /// path is a plain insert that tolerates a duplicate-key rejection
+    /// rather than an upsert — a plain insert hits the primary key
+    /// constraint and surfaces StorageError::DuplicateKey, caught here
+    /// as the documented no-op. The first write of a given id wins;
+    /// chunks are immutable and content-addressed.
+    ///
+    /// Note: the chunks table is NOT append-only, enabling `scrub_text()`
+    /// to zero verbatim text on expunge (secfix/ws2-coredelete).
     ///
     /// Telemetry: emits `corpuskit.ingest.latency_ms` and
     /// `corpuskit.ingest.chunk_count` when monitoring is enabled.
@@ -431,10 +443,57 @@ impl BundleStore {
         Ok(rows.iter().filter_map(decode_chunk).collect())
     }
 
+    // ── Hard-delete erasure (secfix/ws2-coredelete) ──
+
+    /// Zero the verbatim text of every chunk belonging to `source_id`.
+    ///
+    /// Updates `chunks` SET `text` = "" WHERE `source_id` = source_id.
+    /// This is the corpus layer's contribution to the hard-delete
+    /// destruction contract — the counterpart to Swift's
+    /// `BundleStore.scrubText(sourceID:)`.
+    ///
+    /// Called by `Corpus::expunge(source_id)` as part of the two-phase
+    /// expunge flow: scrub text first, then remove from recall.
+    /// The content_hash column is left stale intentionally — the data
+    /// is being destroyed; Merkle chain accuracy for a destroyed corpus
+    /// is not a requirement.
+    ///
+    /// Returns the number of chunk rows whose text was zeroed.
+    pub fn scrub_text(&self, source_id: &str) -> CorpusKitResult<usize> {
+        let mut values = BTreeMap::new();
+        values.insert("text".to_string(), TypedValue::Text(String::new()));
+        let predicate = StoragePredicate::Eq(
+            Column::new("chunks", "source_id"),
+            TypedValue::Text(source_id.to_string()),
+        );
+        self.storage
+            .row_store()
+            .update("chunks", values, &predicate)
+            .map_err(|e| CorpusKitError::StoreUnavailable(e.to_string()))
+    }
+
     // ── Per-corpus Merkle root (NT-C1 Part 3) ──
 
     /// Recompute the Merkle root for one corpus (source_id) from the
     /// content_hashes of its chunks. Stores the result in the
+    /// Recompute Merkle roots for all existing corpora.
+    ///
+    /// Called by `open()` after schema migration to backfill any existing
+    /// chunks that were inserted before the `corpus_metadata` table was
+    /// introduced (schema v3). Without this call, `global_corpus_merkle_root`
+    /// returns `MerkleRoot::EMPTY` for any estate upgraded from v2, even
+    /// though chunks exist (WS2-F3, fixed 2026-06-28).
+    ///
+    /// Idempotent: upsert on conflict, so re-running on an already-populated
+    /// corpus_metadata table is a harmless no-op per-row.
+    fn recompute_all_corpus_merkle_roots(&self) -> CorpusKitResult<()> {
+        let source_ids = self.all_source_ids(None)?;
+        for source_id in source_ids {
+            self.rollup_corpus_merkle_root(&source_id)?;
+        }
+        Ok(())
+    }
+
     /// `corpus_metadata` table via upsert.
     ///
     /// For chunks without a stored content_hash (pre-v3 data), a leaf

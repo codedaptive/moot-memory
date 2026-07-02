@@ -50,7 +50,7 @@ import VectorKit
 // MARK: - Helpers
 
 /// FNV-1a 64-bit hash (mirrors the FDC node-vector seed derivation).
-/// Used in tests to verify the seed matches the expected value.
+/// Present for reference; no seed-value assertion currently uses this helper.
 private func fnv64(_ s: String) -> UInt64 {
     let offsetBasis: UInt64 = 14_695_981_039_346_656_037
     let prime: UInt64 = 1_099_511_628_211

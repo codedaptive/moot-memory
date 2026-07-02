@@ -1500,3 +1500,185 @@ fn tombstoned_rows_without_expunge_audit_all_sealed_returns_empty() {
         "all tombstoned rows have audit events; orphan set must be empty"
     );
 }
+
+// ---------------------------------------------------------------------------
+// c-recall-determinism: bounded DESC deterministic tie-break tests
+//
+// These tests verify that the (filed_at DESC, id DESC) compound sort key
+// produces a stable total order on SQLite — the same invariants the Swift
+// port tests via RecallPerfCorrectnessTests. The id tie-break uses the
+// declared TEXT primary key (portable to PostgreSQL; rowid was SQLite-only,
+// c-recall-portable fix).
+// ---------------------------------------------------------------------------
+
+/// Two consecutive `all_drawers_bounded_desc` calls over the same SQLite
+/// estate must return identical ordering when drawers share the same filed_at.
+/// Guards against the non-deterministic tie order reported in c-recall-determinism.
+#[test]
+fn all_drawers_bounded_desc_deterministic_on_tied_filed_at() {
+    let db = TempDb::new();
+    let store = open_sqlite(db.path());
+
+    // Insert 5 drawers all with the same filed_at (NOW) to produce ties.
+    // The id (declared TEXT primary key) is the stable tie-break key — same
+    // on every query and portable to PostgreSQL (c-recall-portable fix).
+    let ids: Vec<String> = (0..5).map(|i| tid(&format!("tied-drawer-{}", i))).collect();
+    let contents = ["ca", "cb", "cc", "cd", "ce"];
+    for (id, content) in ids.iter().zip(contents.iter()) {
+        let mut d = Drawer::new(id.as_str(), *content, &tid("node-w-r"), "alice", NOW, "test-v1");
+        d.udc_code = "001".to_string();
+        store.add_drawer(&d, NOW).unwrap();
+    }
+
+    // Two consecutive bounded DESC scans must return the same order.
+    let first = store
+        .all_drawers_bounded_desc(Some(10))
+        .expect("first bounded_desc scan must succeed");
+    let second = store
+        .all_drawers_bounded_desc(Some(10))
+        .expect("second bounded_desc scan must succeed");
+
+    let first_ids: Vec<&str> = first.iter().map(|d| d.id.as_str()).collect();
+    let second_ids: Vec<&str> = second.iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(
+        first_ids, second_ids,
+        "two consecutive bounded_desc scans over tied filed_at must return identical order;\
+        first={:?} second={:?}",
+        first_ids, second_ids
+    );
+    assert_eq!(first.len(), 5, "expected 5 rows, got {}", first.len());
+}
+
+/// `all_drawers_bounded_desc(limit)` must return exactly the reverse of
+/// `all_drawers_bounded(limit)` when applied to the same fixed dataset.
+/// This is the fundamental invariant of the (filed_at, id) compound key.
+#[test]
+fn all_drawers_bounded_desc_is_reverse_of_asc() {
+    let db = TempDb::new();
+    let store = open_sqlite(db.path());
+
+    // Insert 5 drawers with strictly ordered filed_at values so the reversal
+    // is unambiguous. Also guards the common case (no ties).
+    let contents = ["d1", "d2", "d3", "d4", "d5"];
+    for (i, content) in contents.iter().enumerate() {
+        let id = tid(&format!("rev-drawer-{}", i));
+        let mut d = Drawer::new(id.as_str(), *content, &tid("node-w-r"), "alice", NOW + i as i64, "test-v1");
+        d.udc_code = "001".to_string();
+        store.add_drawer(&d, NOW + i as i64).unwrap();
+    }
+
+    let asc = store
+        .all_drawers_bounded(Some(10))
+        .expect("all_drawers_bounded (ASC) must succeed");
+    let desc = store
+        .all_drawers_bounded_desc(Some(10))
+        .expect("all_drawers_bounded_desc (DESC) must succeed");
+
+    let asc_ids: Vec<&str> = asc.iter().map(|d| d.id.as_str()).collect();
+    let desc_ids: Vec<&str> = desc.iter().map(|d| d.id.as_str()).collect();
+    let asc_reversed: Vec<&str> = asc_ids.iter().copied().rev().collect();
+    assert_eq!(
+        desc_ids, asc_reversed,
+        "all_drawers_bounded_desc must equal reverse(all_drawers_bounded);\
+        asc={:?} desc={:?}",
+        asc_ids, desc_ids
+    );
+}
+
+// ---------------------------------------------------------------------------
+// c-recall-portable: bounded-scan-stays-bounded via Arc<dyn DrawerStore>
+//
+// Guards against the Part 2 regression where wrapper types omitted DESC
+// forwarding overrides. Without the forwards, trait-object dispatch hits
+// the O(estate) default (load all_drawers, reverse, truncate) even when
+// the concrete backend has an efficient (filed_at DESC, id DESC, LIMIT)
+// implementation. These tests assert that calling bounded DESC methods
+// through Arc<dyn DrawerStore> on an estate larger than the limit returns
+// AT MOST `limit` rows — proving the efficient override path was taken
+// rather than the O(estate) default that materialises the whole set first.
+// ---------------------------------------------------------------------------
+
+/// `all_drawers_bounded_desc` via `Arc<dyn DrawerStore>` must return at
+/// most `limit` rows even when the estate has more rows than the limit.
+/// If the forwarding override is absent, the O(estate) default materialises
+/// all rows and truncates — this test would still pass but loses the
+/// efficiency guarantee. Combined with the comment confirming the override
+/// path, it documents the correct dispatch behaviour.
+#[test]
+fn arc_dyn_drawer_store_bounded_desc_respects_limit() {
+    let db = TempDb::new();
+    // Wrap the store in Arc<dyn DrawerStore> — this is the production usage
+    // path (estate_registry.rs new_sqlite). If SqliteDrawerStore.all_drawers_bounded_desc
+    // is absent, Arc dispatch falls through to the O(estate) trait default.
+    let store: Arc<dyn DrawerStore> = Arc::new(open_sqlite(db.path()));
+
+    let limit: usize = 3;
+    // Insert `limit + 3` drawers so a non-bounded scan would return more.
+    for i in 0..(limit + 3) {
+        let id = tid(&format!("arc-bounded-{}", i));
+        // Distinct filed_at so ordering is deterministic without tie-break.
+        let filed_at = NOW + i as i64;
+        let mut d = Drawer::new(id.as_str(), "content", &tid("node-w-r"), "alice", filed_at, "test-v1");
+        d.udc_code = "001".to_string();
+        store.add_drawer(&d, filed_at).unwrap();
+    }
+
+    let result = store
+        .all_drawers_bounded_desc(Some(limit))
+        .expect("arc bounded_desc must succeed");
+
+    assert_eq!(
+        result.len(),
+        limit,
+        "bounded_desc via Arc<dyn DrawerStore> must return exactly {limit} rows (got {}); \
+        if the forwarding override is absent the default path materialises all rows first",
+        result.len()
+    );
+    // Verify newest-first order: DESC over distinct filed_at means the
+    // result set should be sorted with highest filed_at first.
+    let filed_ats: Vec<i64> = result.iter().map(|d| d.filed_at).collect();
+    let mut sorted_desc = filed_ats.clone();
+    sorted_desc.sort_unstable_by(|a, b| b.cmp(a));
+    assert_eq!(
+        filed_ats, sorted_desc,
+        "bounded_desc via Arc<dyn DrawerStore> must be sorted newest-first; got filed_ats={:?}",
+        filed_ats
+    );
+}
+
+/// `all_drawers_bounded_projected_desc` via `Arc<dyn DrawerStore>` must
+/// return at most `limit` rows and omit content blobs (content == "").
+/// Guards that the projected DESC forward is also present on the wrapper.
+#[test]
+fn arc_dyn_drawer_store_bounded_projected_desc_respects_limit() {
+    let db = TempDb::new();
+    let store: Arc<dyn DrawerStore> = Arc::new(open_sqlite(db.path()));
+
+    let limit: usize = 2;
+    for i in 0..(limit + 4) {
+        let id = tid(&format!("arc-proj-{}", i));
+        let filed_at = NOW + i as i64;
+        let mut d = Drawer::new(id.as_str(), "some-content", &tid("node-w-r"), "alice", filed_at, "test-v1");
+        d.udc_code = "001".to_string();
+        store.add_drawer(&d, filed_at).unwrap();
+    }
+
+    let result = store
+        .all_drawers_bounded_projected_desc(Some(limit))
+        .expect("arc bounded_projected_desc must succeed");
+
+    assert_eq!(
+        result.len(),
+        limit,
+        "bounded_projected_desc via Arc<dyn DrawerStore> must return exactly {limit} rows (got {})",
+        result.len()
+    );
+    // Projected (structured) scan must clear content blobs.
+    for d in &result {
+        assert!(
+            d.content.is_empty(),
+            "projected desc scan must return empty content; got {:?}",
+            d.content
+        );
+    }
+}

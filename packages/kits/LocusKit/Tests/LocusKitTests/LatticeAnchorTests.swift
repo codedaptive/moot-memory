@@ -13,11 +13,7 @@ import Testing
 /// 2. Round-trip with the three optionals nil and `udcCode` empty.
 /// 3. Default behavior of `Drawer.init` — `udcCode` defaults to `""`,
 ///    the three optionals default to nil.
-/// 4. ALTER migration from a pre-04 schema — a database written with
-///    `provenance`, `adjectiveBitmap`, `operationalBitmap` but no
-///    lattice columns must gain all four columns on first open and
-///    surface the seeded row with the documented defaults.
-/// 5. `CREATE INDEX IF NOT EXISTS idx_drawers_udcCode` is applied.
+/// 4. `CREATE INDEX IF NOT EXISTS idx_drawers_udcCode` is applied.
 @Suite("LatticeAnchorTests")
 struct LatticeAnchorTests {
 

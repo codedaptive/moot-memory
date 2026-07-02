@@ -20,10 +20,10 @@
 // CORPUSKIT_REPORT_001 (cp-corpuskit-report): added IntellectusLib
 // self-report telemetry to recall. The emit calls are placed at the
 // operation boundary, after the result is assembled, so the
-// mathematical behaviour is unchanged. When monitoring is disabled
-// (the default), the Intellectus.report(_:) call short-circuits after
-// a single Atomic<Bool> load; the startTime clock read is the only
-// unconditional overhead added per operation.
+// mathematical behaviour is unchanged. The recall path always reads
+// startTime and endTime unconditionally and constructs metric values
+// before calling Intellectus.report; the disabled-monitoring path
+// does not short-circuit these steps.
 
 import Foundation
 import EngramLib
@@ -73,8 +73,8 @@ public enum HybridRecall {
     ///   - configuration: weights, RRF constant, optional MMR.
     ///
     /// Telemetry: emits `corpuskit.recall.latency_ms` (wall time for the
-    /// full hybrid pipeline including embedding, vector kNN, BM25, RRF,
-    /// and hydration), `corpuskit.recall.vector_result_count` (number of
+    /// retrieval/fusion/hydration pipeline; HybridRecall receives a
+    /// precomputed probe, so embedding time is not included), `corpuskit.recall.vector_result_count` (number of
     /// vector hits from findNearest before RRF), `corpuskit.recall.keyword_result_count`
     /// (number of keyword hits from BM25 before RRF), and
     /// `corpuskit.recall.result_count` (final output count after RRF and
@@ -148,15 +148,24 @@ public enum HybridRecall {
         for (idx, hit) in vectorResults.enumerated() {
             // Skip items whose itemID is not a valid UUID string — they
             // cannot be hydrated by bundleStore and are not in the corpus.
-            guard UUID(uuidString: hit.itemID) != nil else { continue }
-            vectorRanked.append((itemID: hit.itemID, rank: idx + 1))
+            // P3-secfix: parse through UUID and re-emit .uuidString so the
+            // key is always the Swift canonical uppercase form (e.g.
+            // "A1B2C3D4-..."). Without this, a vector hit stored with a
+            // lowercase UUID string (common from Rust-side DBs) and a keyword
+            // hit for the same memory use different map keys and never fuse.
+            // Intra-port canonical form: Swift = uppercase UUID.uuidString.
+            guard let parsedUUID = UUID(uuidString: hit.itemID) else { continue }
+            let canonicalID = parsedUUID.uuidString
+            vectorRanked.append((itemID: canonicalID, rank: idx + 1))
             // Hamming distance as Float; lower = closer to probe.
-            vectorScoreMap[hit.itemID] = Float(hit.distance)
+            vectorScoreMap[canonicalID] = Float(hit.distance)
         }
 
         var keywordRanked: [(itemID: String, rank: Int)] = []
         var keywordScoreMap: [String: Float] = [:]
         for (idx, hit) in keywordResults.enumerated() {
+            // hit.id is UUID-typed; .uuidString is always uppercase on Apple —
+            // the same canonical form used for vector hits above.
             let itemID = hit.id.uuidString
             keywordRanked.append((itemID: itemID, rank: idx + 1))
             keywordScoreMap[itemID] = hit.score

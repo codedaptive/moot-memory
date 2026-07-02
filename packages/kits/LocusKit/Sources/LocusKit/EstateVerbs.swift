@@ -18,9 +18,10 @@ import SubstrateLib
 import SubstrateTypes
 
 /// Estate verbs — `capture`, `recall`, `mutate`, `withdraw`,
-/// `expunge`, `reanchor`, `learn`. Per spec § 7.8.1.
+/// `expunge`, `reanchor`, `learn`, `propose`, `associate`.
+/// Per spec § 7.8.1.
 ///
-/// All seven verbs are implemented. `recall`
+/// All nine verbs are implemented. `recall`
 /// returns a paged `RecallStream` over non-tombstoned drawers with
 /// `frame.limit` driving page size and `frame.hydrationLevel`
 /// controlling content stripping (spec § 7.8.4 / § 7.3 / § 7.4);
@@ -43,14 +44,14 @@ public extension Estate {
     /// File a new drawer into the estate.
     ///
     /// Translates `CaptureFrame` slots into a storage `Drawer` and
-    /// writes it via `DrawerStore.addDrawer`. If `frame.lineageID` is
-    /// non-nil and an active predecessor with that lineage exists,
-    /// the supersession cascade fires atomically (spec § 6.2 / § 6.3)
-    /// inside `DrawerStore.addDrawerWithCascade`: the predecessor's
-    /// state flips to `.superseded` through `mutateState` (which
-    /// appends one sealed `AuditEvent`), and a `supersedes` tunnel is
-    /// created — all inside one `.serializable` transaction. If
-    /// `frame.lineageID` is nil, a
+    /// writes it via `addDrawerCovered` → `DrawerStore.addDrawer`. If
+    /// `frame.lineageID` is non-nil and an active predecessor with
+    /// that lineage exists, the supersession cascade runs inside
+    /// `DrawerStore.addDrawerWithCascade` (spec § 6.2 / § 6.3):
+    /// `gatedCapture` inserts the new row, then a `supersedes` tunnel
+    /// is inserted, then the predecessor's state flips to `.superseded`
+    /// via `mutateState` — each step through its own call, not a single
+    /// shared transaction. If `frame.lineageID` is nil, a
     /// fresh `UUID()` is stamped so each drawer is its own lineage
     /// per § 5.10.
     ///
@@ -224,9 +225,11 @@ public extension Estate {
     ///
     /// ## Post-insert coverage
     ///
-    /// After the batch transaction, container fingerprints (`containerFP.orIn`)
-    /// and Merkle roots are updated per-drawer — outside the main transaction —
-    /// to maintain spec § 11.5 Option B correctness.
+    /// After the batch transaction, container fingerprints
+    /// (`containerFP.orIn`) are updated per-drawer outside the main
+    /// transaction. Merkle rollup is explicitly deferred — it is not
+    /// performed inline here; it runs via the reindex/rollup path
+    /// (`recomputeAllMerkleRoots`) when triggered by the caller.
     ///
     /// - Parameter frames: Capture frames to insert. Empty input returns `[]`.
     /// - Returns: Stored drawers in the same order as `frames`.
@@ -408,9 +411,9 @@ public extension Estate {
 
     /// The ONE sanctioned path to add a drawer inside the verb layer.
     ///
-    /// Bundles `DrawerStore.addDrawer` and `ContainerFingerprintStore.orIn`
-    /// as a single atomic step so the per-container OR aggregate is ALWAYS
-    /// maintained. This structural chokepoint makes add-coverage impossible
+    /// Sequentially pairs `DrawerStore.addDrawer` and
+    /// `ContainerFingerprintStore.orIn` (two awaits, no shared transaction)
+    /// so the per-container OR aggregate is ALWAYS maintained. This structural chokepoint makes add-coverage impossible
     /// to skip: every verb that needs to add a drawer calls this method, not
     /// `store.addDrawer` directly.
     ///
@@ -441,11 +444,10 @@ public extension Estate {
             now: now)
         // NT-L3: the Merkle rollup is NOT done inline here — per-drawer rollup is
         // O(room) per write → O(N²) for a bulk import and pegs the CPU on the
-        // write path. The rollup is deferred and rides the estate's QueueKit work
-        // queue: streaming captures (capture(_:_:mode:) .regular) enqueue an
-        // encode job, and the encode drain worker rolls up the touched rooms
-        // off-path (coalesced); bulk-import paths defer to the O(N) full-tree pass
-        // in reindex (recomputeAllMerkleRoots). Same mechanism as encode.
+        // write path. This method only omits the inline rollup; enqueuing the
+        // rollup work (for streaming captures or bulk-import paths) is the
+        // responsibility of the callers above this chokepoint, not this method.
+        // The O(N) full-tree pass is `recomputeAllMerkleRoots`.
     }
 
     /// File a new standalone **tunnel** (graph edge) into the estate.
@@ -883,7 +885,21 @@ public extension Estate {
             // Apply bound after collection: both paths emit at most scanBound rows.
             candidates = Array(rows.prefix(scanBound))
         } else {
-            // No pruning possible: bounded corpus scan in filedAt order.
+            // No pruning possible: bounded corpus scan.
+            // P4-secfix: scan ORDER BY (filedAt DESC, id DESC) so the cap
+            // retains the NEWEST candidates rather than the oldest. An estate
+            // with >256 drawers and a Director-path caller (frame.limit == nil
+            // → scanBound = 256) would silently exclude every drawer filed
+            // after the 256th-oldest. DESC ordering ensures recent content is
+            // always in the candidate pool.
+            // The compound (filedAt, id) key gives a deterministic total
+            // order: rows with the same filedAt are broken by id (the declared
+            // TEXT primary key, present in SQLite + PostgreSQL + InMemory),
+            // so DESC is exactly reverse(ASC) for any fixed dataset.
+            // Using id (not rowid) makes the tie-break portable to PostgreSQL
+            // estates where rowid is undefined (c-recall-portable fix).
+            // insertion order — this scan order affects WHICH drawers reach
+            // the ranking step, not HOW they are ranked.
             // Uses scanHydration — no-blob when there is no content predicate.
             // Tombstoned rows are included in the scan, so filter them here.
             // A scan failure is surfaced as the live-rows stage rather than
@@ -892,7 +908,10 @@ public extension Estate {
                 if forcedFault == .liveRows {
                     throw RecallInternalReadFailure(stage: RecallStage.liveRowsReadFailed)
                 }
-                candidates = (try await store.allDrawers(hydrationLevel: scanHydration, limit: scanBound))
+                candidates = (try await store.allDrawers(
+                    hydrationLevel: scanHydration,
+                    limit: scanBound,
+                    direction: .descending))
                     .filter { $0.tombstonedAt == nil }
             } catch let err as RecallInternalReadFailure {
                 throw err
@@ -925,13 +944,14 @@ public extension Estate {
 
     /// Withdraw a drawer — move its `State` axis to `.withdrawn`.
     ///
-    /// Composes the new adjective bitmap by clearing bits 0–3 with
-    /// `& ~0xF` and OR-ing in `State.withdrawn.rawValue`, preserving
-    /// the upper adjective axes (sensitivity / exportability / trust).
-    /// `DrawerStore.mutateState(.withdrawn, via: .retract)` updates
-    /// the projection and appends one sealed `AuditEvent` atomically
-    /// — there is no observable window in which the state flip
-    /// exists without its audit event.
+    /// Delegates to `DrawerStore.mutateState(.withdrawn, via: .retract)`,
+    /// which composes the new adjective bitmap by clearing the 6-bit
+    /// state slot (bits 0–5, mask `0x3F`) and OR-ing in
+    /// `State.withdrawn.rawValue`, preserving the upper adjective axes
+    /// (sensitivity / exportability / trust). The projection update and
+    /// the sealed `AuditEvent` are appended atomically — there is no
+    /// observable window in which the state flip exists without its
+    /// audit event.
     ///
     /// - Parameters:
     ///   - rowID: the drawer's `id`.
@@ -999,20 +1019,19 @@ public extension Estate {
     ///     if the prior state cannot transition via `.tombstone`
     ///     (notably: accepted rows, per S-3)
     ///
-    /// When `sealAudit` is `true` (default), the audit event seals
-    /// atomically inside the storage transaction — correct for direct
-    /// callers that own the full expunge. When `false`, the gate-produced
-    /// event is returned so the caller (GLK `VerbSurface.expunge`) can
-    /// seal it after its own cross-kit orchestration step, satisfying the
-    /// §B-2a audit-seal ordering contract: success audit only after the
-    /// full two-step privacy delete.
+    /// The audit event is sealed atomically inside the storage transaction —
+    /// correct for direct callers that own the full expunge. GeniusLocusKit's
+    /// two-step §B-2a orchestration (seal after cross-kit vector delete) must
+    /// use `expungeReturningUnsealedEvent(rowID:reason:confirmation:now:)` instead;
+    /// that method is the only path that defers the seal. Removing `sealAudit`
+    /// from this public surface prevents any caller from accidentally suppressing
+    /// the audit event (secfix/ws2-coredelete).
     @discardableResult
     func expunge(
         rowID: RowID,
         reason: String,
         confirmation: Bool,
-        now: Date = Date(),
-        sealAudit: Bool = true
+        now: Date = Date()
     ) async throws -> AuditEvent? {
         guard confirmation else {
             throw LocusKitError.invalidContent(
@@ -1023,16 +1042,80 @@ public extension Estate {
             throw LocusKitError.drawerNotFound(id: rowID)
         }
         let changedBy = (try? await store.readManifest().ownerIdentifier) ?? ""
+
+        // WS2-F2: expungeGated tombstones the full lineage chain, which
+        // may span multiple rooms (lineage members can migrate via reanchor).
+        // Collect all distinct parent room IDs for the lineage BEFORE
+        // expunge so they can all be rolled up after tombstoning.
+        let lineageIds = try await store.lineageChain(for: rowID)
+        let idsToFetch = lineageIds.isEmpty ? [rowID] : lineageIds
+        let lineageDrawers = (try? await store.getDrawers(ids: idsToFetch)) ?? [drawer]
+        let affectedRoomIds = Set(lineageDrawers.compactMap { UUID(uuidString: $0.parentNodeId) })
+
         let result = try await store.expungeGated(
             drawerId: rowID,
             changedBy: changedBy.isEmpty ? "estate" : changedBy,
             reason: reason.isEmpty ? "expunged via Estate.expunge" : reason,
             now: now,
-            sealAudit: sealAudit
+            sealAudit: true
         )
-        // NT-L3: Merkle rollup after expunge (tombstoned drawer excluded
-        // from the room root).
-        if let roomNodeId = UUID(uuidString: drawer.parentNodeId) {
+        // NT-L3: Merkle rollup after expunge. Roll up ALL rooms that
+        // contained any lineage member — not just the room of the
+        // initiating drawer — so cross-room lineage expunge keeps every
+        // affected room's root correct (WS2-F2, fixed 2026-06-28).
+        for roomNodeId in affectedRoomIds {
+            try await rollupMerkleRoots(roomNodeId: roomNodeId, now: now)
+        }
+        return result
+    }
+
+    /// Expunge a drawer and return the unsealed audit event for deferred sealing.
+    ///
+    /// This is the GeniusLocusKit-exclusive entry point for the two-step §B-2a
+    /// expunge orchestration: GLK calls this (step 1), performs its cross-kit
+    /// vector/corpus delete (step 2), then seals via `sealExpungeAudit(_:)` or
+    /// `sealExpungeOrphanAudit(rowID:successEvent:now:)` (step 3). The return
+    /// value is always non-nil when the gate succeeds; a nil return indicates an
+    /// internal contract violation and must not be silently swallowed — GLK uses
+    /// a force-unwrap (`!`) as a deliberate programmer-error trap.
+    ///
+    /// Separating this path from `expunge()` prevents arbitrary callers from
+    /// suppressing the audit event. The `sealAudit:` parameter no longer exists
+    /// on the public surface (secfix/ws2-coredelete).
+    func expungeReturningUnsealedEvent(
+        rowID: RowID,
+        reason: String,
+        confirmation: Bool,
+        now: Date = Date()
+    ) async throws -> AuditEvent? {
+        guard confirmation else {
+            throw LocusKitError.invalidContent(
+                "expunge requires confirmation: true (destructive op)"
+            )
+        }
+        guard let drawer = try await store.getDrawer(id: rowID) else {
+            throw LocusKitError.drawerNotFound(id: rowID)
+        }
+        let changedBy = (try? await store.readManifest().ownerIdentifier) ?? ""
+
+        // WS2-F2: collect all distinct parent room IDs for the lineage BEFORE
+        // expunge so they can all be rolled up after tombstoning. Lineage
+        // members may span multiple rooms (reanchor).
+        let lineageIds = try await store.lineageChain(for: rowID)
+        let idsToFetch = lineageIds.isEmpty ? [rowID] : lineageIds
+        let lineageDrawers = (try? await store.getDrawers(ids: idsToFetch)) ?? [drawer]
+        let affectedRoomIds = Set(lineageDrawers.compactMap { UUID(uuidString: $0.parentNodeId) })
+
+        let result = try await store.expungeGated(
+            drawerId: rowID,
+            changedBy: changedBy.isEmpty ? "estate" : changedBy,
+            reason: reason.isEmpty ? "expunged via Estate.expunge" : reason,
+            now: now,
+            sealAudit: false
+        )
+        // NT-L3: Merkle rollup after expunge. Roll up ALL rooms that
+        // contained any lineage member (WS2-F2, fixed 2026-06-28).
+        for roomNodeId in affectedRoomIds {
             try await rollupMerkleRoots(roomNodeId: roomNodeId, now: now)
         }
         return result
@@ -1052,7 +1135,7 @@ public extension Estate {
     ///
     /// GLK calls this after the cross-kit vector delete completes
     /// successfully. The `event` is the value returned by
-    /// `expunge(sealAudit:false)`.
+    /// `expungeReturningUnsealedEvent(rowID:reason:confirmation:now:)`.
     ///
     /// Deterministic: the caller threads the same `now` the verb received.
     func sealExpungeAudit(_ event: AuditEvent) async throws {
@@ -1063,7 +1146,7 @@ public extension Estate {
     /// phase succeeded but whose cross-kit vector delete (step 2) failed.
     ///
     /// GLK calls this on `crossKitVectorDeleteFailed` before rethrowing.
-    /// The `event` is the value returned by `expunge(sealAudit:false)`.
+    /// The `event` is the value returned by `expungeReturningUnsealedEvent(rowID:reason:confirmation:now:)`.
     /// The orphan event uses verb `"expungeOrphan"` so audit consumers
     /// can distinguish a clean expunge from a partial one by reading the
     /// substrate audit trail.
@@ -1420,13 +1503,15 @@ public extension Estate {
         }
     }
 
-    /// Reanchor a drawer to a different room and/or lattice position.
+    /// Reanchor a drawer to a different room, wing, and/or lattice position.
     ///
     /// Moves the row's placement: `toRoom` changes the `room` column;
-    /// `toLattice` updates `udcCode`, `udcFacets`, `wikidataQID`, and
-    /// `wikidataQidsSecondary`. At least one must be supplied (belt-and-
-    /// suspenders guard; the primary empty check is GLK's `VerbError.emptyReanchor`
-    /// boundary before dispatch). An absent row throws `drawerNotFound`.
+    /// `toWing` resolves the new wing node and updates `parent_node_id`
+    /// via `DrawerStore.reanchorGated`; `toLattice` updates `udcCode`,
+    /// `udcFacets`, `wikidataQID`, and `wikidataQidsSecondary`. At least
+    /// one of the three must be supplied (belt-and-suspenders guard; the
+    /// primary empty check is GLK's `VerbError.emptyReanchor` boundary
+    /// before dispatch). An absent row throws `drawerNotFound`.
     ///
     /// The placement change is persisted via `DrawerStore.reanchorGated`,
     /// which reads the current row in a transaction, admits a `.mutate`
@@ -1449,6 +1534,16 @@ public extension Estate {
         guard toRoom != nil || toWing != nil || toLattice != nil else {
             throw LocusKitError.invalidContent(
                 "reanchor requires toRoom, toWing, or toLattice"
+            )
+        }
+        // Wing non-empty invariant: when toWing is supplied it must be
+        // non-empty. An empty wing string would create a nameless wing
+        // node and violate the same invariant the capture path enforces.
+        // Mirror the capture-path guard so move_memory cannot produce an
+        // estate state that capture would refuse to create.
+        if let w = toWing, w.trimmingCharacters(in: .whitespaces).isEmpty {
+            throw LocusKitError.invalidContent(
+                "reanchor: toWing must not be empty or whitespace-only"
             )
         }
         guard try await store.getDrawer(id: rowID) != nil else {
@@ -1828,9 +1923,9 @@ public extension Estate {
         return try await store.auditEventCountForRow(uuid)
     }
 
-    /// The default wing for `capture` when the caller does not supply an
-    /// explicit wing (which is currently always — `CaptureFrame` has no
-    /// wing slot at the MVP milestone; rooms partition within the default wing).
+    /// The default wing for `capture` when `CaptureFrame.wing` is nil.
+    /// `capture` reads `frame.wing` and falls back to this value when
+    /// the caller does not supply an explicit wing.
     ///
     /// ADR-016: fixed to `defaultWingName` ("Agentic Memory"), replacing the
     /// prior dynamic `"wing_<owner>"` derivation. All captures without an

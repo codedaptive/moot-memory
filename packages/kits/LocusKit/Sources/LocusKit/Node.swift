@@ -20,8 +20,8 @@ import SubstrateTypes
 /// Nodes represent the structural skeleton: estate root, wings, and
 /// rooms. Drawers reference their parent room via `parent_node_id`
 /// on the drawers table (NT-L2). The `merkleRoot` field carries the
-/// per-node SHA-256 hash populated by the Merkle rollup on every
-/// capture, expunge, and withdraw.
+/// per-node SHA-256 hash populated by `MerkleRollup`; current capture
+/// paths defer rollup rather than computing it inline.
 public struct Node: Sendable, Equatable, Codable, Hashable {
 
     /// Stable UUID identifier for this node.
@@ -55,7 +55,8 @@ public struct Node: Sendable, Equatable, Codable, Hashable {
     public var tombstonedAt: Date?
 
     /// Per-node Merkle content-integrity root (§16). Stored as a 32-byte
-    /// BLOB in SQLite. Nil until hash-on-write populates it.
+    /// BLOB in SQLite. Nil until `MerkleRollup` populates it;
+    /// hash-on-write applies to drawer content hashes, not node roots.
     public var merkleRoot: MerkleRoot?
 
     /// Wall-clock creation timestamp (ISO8601 TEXT in SQLite).

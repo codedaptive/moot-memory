@@ -8,10 +8,11 @@ import Testing
 /// behavior of `Drawer.operationalBitmap` for callers that omit
 /// the parameter.
 ///
-/// migration that persists `operationalBitmap` ships in
-/// LOCI_V035_02B. These tests therefore exercise pure value
-/// types — enum raw values, bit-extraction accessors, OptionSet
-/// membership, and Codable equality — without touching DrawerStore.
+/// `operationalBitmap` persistence is implemented in `DrawerStore`
+/// and covered by the store-level test suites. This file exercises
+/// pure value types — enum raw values, bit-extraction accessors,
+/// OptionSet membership, and Codable equality — without touching
+/// DrawerStore.
 @Suite("DrawerOperationalTests")
 struct DrawerOperationalTests {
 

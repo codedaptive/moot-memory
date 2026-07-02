@@ -17,9 +17,9 @@ import Testing
 ///
 /// Note: Tunnel/KGFact/Diary operational bitmaps are LocusKit-internal
 /// layouts not specified by cookbook §2.4 v0.6. Their tests live in
-/// their respective Tests/LocusKitTests files (TunnelOperationalTests,
-/// KGFactStoreTests, DiaryOperationalTests) and are not gated by this
-/// conformance file.
+/// their respective Tests/LocusKitTests files (`TunnelBitmapTests.swift`,
+/// `TunnelKindTests.swift`, `TunnelTests.swift`, `KGFactStoreTests.swift`,
+/// `DiaryOperationalTests.swift`) and are not gated by this conformance file.
 @Suite("OperationalBitmapConformanceTests")
 struct OperationalBitmapConformanceTests {
 

@@ -16,7 +16,7 @@
 //!    those concerns. Confirmation is not defaulted: unconfirmed captures
 //!    are recallable unless the caller explicitly asks for `UserConfirmed`.
 //!    Tombstone exclusion is always enforced and is independent of the
-//!    chain (`state == 9` rejected at the bitmap tier).
+//!    chain (`STATE_TOMBSTONE = 33` rejected at the bitmap tier).
 //! 2. **Bitmap-tier evaluation** (§ 7.9.2 / § 7.9.3) — each `Filter`
 //!    case compiles to a predicate over `(adjective_bitmap,
 //!    operational_bitmap, provenance)` and is applied via the
@@ -43,8 +43,9 @@
 //!
 //! - `async throws -> [Drawer]` → `Result<Vec<Drawer>, LocusKitError>`.
 //!   The Rust trait surface is sync; the bitmap evaluator follows.
-//! - `Date asOf` → `Option<i64>` epoch-seconds. The audit timestamps
-//!   already use epoch seconds across the LocusKit Rust port.
+//! - `Date asOf` → `Option<HLC>`. Reconstruction folds the audit log
+//!   by HLC via `AuditLogFold::project_state_at`; state is keyed on HLC,
+//!   not wall-clock.
 //! - Swift `localizedCaseInsensitiveContains` →
 //!   `to_lowercase().contains(...)`. For ASCII corpora (the LP-0
 //!   vectors) the two are byte-identical; for non-ASCII content the
@@ -798,7 +799,7 @@ mod tests {
         // Default the state/trust/sensitivity axes so the evaluator's
         // implicit-default filters do not eliminate the sample row:
         //
-        // - state = Active (raw 0, in know-now cluster < 3) ✓
+        // - state = Active (raw 0, in know-now cluster A; cluster = (raw >> 4) & 0x3 == 0) ✓
         // - sensitivity ≤ Normal (raw 0) ✓
         // - trust = Verbatim (raw 0, < 4) ✓
         // - confirmation = UserConfirmed for tests that exercise the

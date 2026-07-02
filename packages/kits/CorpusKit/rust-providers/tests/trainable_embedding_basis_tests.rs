@@ -8,8 +8,9 @@
 //!
 //! Also exercises `EmbeddingModelConfig::reconstruct`: the trainable cases
 //! round-trip a basis blob to embeddings identical to the trained provider's,
-//! and the non-trainable cases (Deterministic / named / FDC) return
-//! `CorpusKitError::NotTrainable` rather than panicking.
+//! and the non-trainable cases (Deterministic / FDC) return
+//! `CorpusKitError::NotTrainable` rather than panicking. Named-model cases
+//! (MiniLM/MPNet/EmbeddingGemma) are not exercised in this file.
 //!
 //! Fixtures are embedded with `include_bytes!` (hermetic, no I/O at test time);
 //! base64 is decoded by the shared inline decoder in `basis_fixture` (C-1: no

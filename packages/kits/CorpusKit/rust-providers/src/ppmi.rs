@@ -715,7 +715,7 @@ mod tests {
         for doc in &corpus {
             original.train(doc, PPMI_WINDOW);
         }
-        // Serialize counts BEFORE finalize (finalize clears the count tables).
+        // Serialize counts before finalize. finalize() clears ppmi_vectors and recomputes but does not clear co_count, term_count, or total_pairs.
         let blob = original.serialize_counts();
         original.finalize();
         let mut restored = PpmiProvider::from_serialized_counts(&blob).expect("restore counts");
@@ -915,7 +915,8 @@ mod tests {
 
     #[test]
     fn finalize_before_embed_returns_empty() {
-        // Without finalize, ppmi_vectors is empty → all terms are OOV.
+        // Without finalize, ppmi_vectors is empty → embed_float returns empty
+        // immediately (no-basis opt-out before OOV detection).
         let mut provider = PpmiProvider::new();
         let corpus = vec![
             vec!["car", "engine", "drive"],
@@ -923,7 +924,8 @@ mod tests {
         for doc in &corpus {
             provider.train(doc, PPMI_WINDOW);
         }
-        // NOT finalized: embed_float must return empty (all OOV in ppmi_vectors).
+        // NOT finalized: embed_float returns empty because ppmi_vectors is empty
+        // (structural no-basis opt-out, not OOV detection).
         let v = provider.embed_float("car engine").unwrap();
         assert!(v.is_empty(), "embed_float must return empty before finalize() is called");
 

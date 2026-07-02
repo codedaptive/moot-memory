@@ -17,9 +17,10 @@ import Foundation
 /// itself" — useful for room-level concepts that are not
 /// anchored to any single drawer.
 ///
-/// `tombstonedAt` and `removedByBatch` are present from
-/// Rev 1.0 so the schema does not need to migrate when the
-/// soft-delete workflow lands.
+/// `tombstonedAt` is written by tunnel-tombstone operations (e.g.
+/// outline-parent replacement) and filtered by active-tunnel queries.
+/// `removedByBatch` is reserved for the Rev 2.0 receipt-rollback
+/// workflow.
 public struct Tunnel: Equatable, Hashable, Codable, Sendable {
 
     /// Stable identifier. Conventionally the SHA-256 of the
@@ -84,8 +85,8 @@ public struct Tunnel: Equatable, Hashable, Codable, Sendable {
     /// When the tunnel was added. TEXT ISO8601 in SQLite.
     public let filedAt: Date
 
-    /// When this tunnel was tombstoned, if it has been.
-    /// Reserved for the Rev 2.0 soft-delete workflow.
+    /// When this tunnel was tombstoned, if it has been. Written by
+    /// tunnel-tombstone operations; live tunnel queries filter this field.
     public let tombstonedAt: Date?
 
     /// Batch identifier used for receipt-based rollback of a

@@ -6,8 +6,8 @@
 // ## Why this exists
 //
 // `BundleStore.chunks` is append-only (schema invariant): `remove(sourceID:)`
-// deletes the source's vector rows and clears it from the in-memory BM25 index,
-// but it cannot delete the chunk rows. A reindex (or a BM25 rebuild on open)
+// deletes the source's vector rows and removes its term frequencies from the
+// durable InvertedIndexStore. A reindex (or an InvertedIndexStore reload on open)
 // reads `allChunks()` and would re-embed / re-index the removed source's chunks,
 // resurrecting it in recall — and the autonomic governor's auto-reindex makes
 // that happen automatically in normal operation. This store records which

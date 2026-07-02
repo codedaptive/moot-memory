@@ -55,7 +55,8 @@ public enum TunnelKind: Int, Sendable, Codable {
 
 /// Directionality of a tunnel — whether traversal is meaningful one
 /// way, both ways, fully symmetric, or hub-like. Per spec § 5.6.
-/// Contiguous encoding; 4 used, 12 reserved when packed into 4 bits.
+/// Contiguous encoding; 4 used, 4 reserved when packed into the
+/// 3-bit direction field at bits 0–2 of `operationalBitmap`.
 public enum TunnelDirection: Int, Sendable, Codable {
     case directional = 0
     case bidirectional = 1

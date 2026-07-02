@@ -7,10 +7,10 @@ import Testing
 /// predicates per spec § 6.1, and the default-zero behavior of
 /// `Drawer.adjectiveBitmap` for callers that omit the parameter.
 ///
-/// migration that persists `adjectiveBitmap` ships in
-/// LOCI_V035_01B. These tests therefore exercise pure value
-/// types — enum raw values, bit-extraction accessors, predicates,
-/// and Codable equality — without touching DrawerStore.
+/// Covers pure value/accessor behavior: enum raw values,
+/// bit-extraction accessors, predicates, and Codable equality.
+/// Persistence coverage for `adjectiveBitmap` lives in
+/// `DrawerStoreTests.swift`.
 @Suite("AdjectiveBitmapTests")
 struct AdjectiveBitmapTests {
 

@@ -14,9 +14,10 @@
 //     I-NT-4 name uniqueness within parent (active only),
 //     I-NT-5 referential integrity on parent_id.
 //
-// The store uses upsert with conflict columns for the INSERT OR IGNORE
-// then SELECT race-safe create-on-demand pattern. Two concurrent creates
-// of the same name under the same parent produce exactly one node.
+// Race safety for create-on-demand is provided by actor serialization:
+// `DrawerStore` is an actor, so all find-then-insert sequences are
+// serialized without INSERT-OR-IGNORE or conflict columns. Two concurrent
+// creates of the same name under the same parent produce exactly one node.
 //
 // Date columns are TEXT ISO8601 (PersistenceKit maps .timestamp to TEXT,
 // per fleet rule). The store passes `now` as a Date parameter to every
@@ -32,8 +33,9 @@ private let nodeStoreLog = Logger(subsystem: "com.mootx01.kit", category: "Locus
 /// Storage for the estate's containment tree.
 ///
 /// Methods are async because every operation touches the actor's
-/// isolated Storage. Per-operation atomicity for multi-step paths
-/// uses storage.transaction.
+/// isolated Storage. Multi-step paths such as `createNode` and
+/// `createRoot` rely on actor serialization rather than
+/// `storage.transaction` for their atomicity guarantee.
 public actor NodeStore {
 
     let storage: any Storage

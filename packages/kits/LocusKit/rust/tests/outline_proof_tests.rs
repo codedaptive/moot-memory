@@ -282,3 +282,62 @@ fn sqlite_one_parent_per_child() {
     let db = TempDb::new();
     run_one_parent_per_child(&open_sqlite(db.path.as_str()));
 }
+
+// ---------------------------------------------------------------------------
+// P5-secfix: Arc<dyn DrawerStore> forwards the six previously-missing methods.
+//
+// The six methods (living_successor_in_lineage, outline_children,
+// outline_ancestors, reparent_drawer, count_drawer_rows, wipe_all_content)
+// had default trap implementations in the trait (returning DatabaseUnavailable)
+// but were absent from the Arc blanket impl. Any caller that held an
+// Arc<dyn DrawerStore> always hit the trap — never the concrete backend.
+// These tests call each of the six methods via Arc and verify the concrete
+// InMemory backend actually runs.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn arc_dyn_outline_and_wipe_forwards_reach_concrete_backend() {
+    use locus_kit::drawer_store_inmemory::InMemoryDrawerStore;
+    use std::sync::Arc;
+
+    let store: Arc<dyn locus_kit::drawer_store::DrawerStore> =
+        Arc::new(InMemoryDrawerStore::new(NOW, None).unwrap());
+
+    // Seed two drawers and a parent tunnel.
+    store.add_drawer(&sample_drawer("p5-root"), NOW).unwrap();
+    store.add_drawer(&sample_drawer("p5-child"), NOW).unwrap();
+    store.add_tunnel(&parent_tunnel("p5-child", "p5-root", 1.0, NOW)).unwrap();
+
+    // P5: outline_children — must return the child, not DatabaseUnavailable.
+    let children = store.outline_children(&tid("p5-root"))
+        .expect("P5-secfix: outline_children via Arc must delegate to concrete backend");
+    assert_eq!(children.len(), 1, "one child expected; P5 Arc forward broken if 0");
+
+    // P5: outline_ancestors — must return the root.
+    let ancestors = store.outline_ancestors(&tid("p5-child"))
+        .expect("P5-secfix: outline_ancestors via Arc must delegate to concrete backend");
+    assert_eq!(ancestors.len(), 1, "one ancestor expected; P5 Arc forward broken if 0");
+
+    // P5: reparent_drawer — move child to outline root (None parent).
+    store.reparent_drawer(&tid("p5-child"), None, 0.0, "w", "r", "bilby", LATER)
+        .expect("P5-secfix: reparent_drawer via Arc must delegate to concrete backend");
+    let after = store.outline_ancestors(&tid("p5-child")).unwrap();
+    assert!(after.is_empty(), "after reparent to root, ancestors must be empty");
+
+    // P5: count_drawer_rows — must return 2, not DatabaseUnavailable.
+    let count = store.count_drawer_rows()
+        .expect("P5-secfix: count_drawer_rows via Arc must delegate to concrete backend");
+    assert_eq!(count, 2, "two drawers were added; P5 Arc forward broken if error");
+
+    // P5: wipe_all_content — must succeed, not DatabaseUnavailable.
+    store.wipe_all_content()
+        .expect("P5-secfix: wipe_all_content via Arc must delegate to concrete backend");
+
+    // P5: living_successor_in_lineage — no living successor (no revive wired); must
+    // return Ok(None), not Err(DatabaseUnavailable).
+    let lineage_id = tid("p5-root");
+    let successor = store.living_successor_in_lineage(&lineage_id, &tid("nobody"))
+        .expect("P5-secfix: living_successor_in_lineage via Arc must delegate to concrete backend");
+    // The two seeded drawers share no explicit lineage; None is the correct result.
+    assert!(successor.is_none(), "no revive chain seeded; successor must be None");
+}

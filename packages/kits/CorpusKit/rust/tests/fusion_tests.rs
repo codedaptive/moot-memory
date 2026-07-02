@@ -218,8 +218,8 @@ fn hybrid_recall_rrf_formula_conformance() {
 //   - results are score descending.
 //   - top result has a non-nil vector_score (it contributed a vector hit).
 //
-// Uses InMemoryStorage (no SQLite on the Rust side for integration tests;
-// the Swift test covers SQLite). The lock prevents telemetry leakage.
+// Uses in-memory SQLite (rusqlite's ":memory:" backend). The lock prevents
+// telemetry leakage.
 
 #[test]
 fn hybrid_recall_conformance_end_to_end() {

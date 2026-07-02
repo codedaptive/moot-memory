@@ -5,7 +5,7 @@
 //! seeds seven named wings, each with a hint memory in the normal room
 //! `HINT_ROOM` ("AI_Charter_Hint"). These constants drive both the per-capture
 //! wing assignment (in `estate_verbs.rs`) and the seeding loop in
-//! `coordinator.rs`.
+//! `estate_verbs.rs::seed_wing`.
 //!
 //! Seven seeded wings:
 //! 1. Agentic Memory — the default wing for all `capture` calls
@@ -24,8 +24,9 @@
 pub const DEFAULT_WING_NAME: &str = "Agentic Memory";
 
 /// Room name for per-wing hint memories seeded at provision. ADR-016 §2.
-/// A drawer filed in this room IS the act of creating the wing —
-/// no separate wings table exists; wings emerge from SELECT DISTINCT wing.
+/// A drawer filed in this room IS the hint memory for the wing.
+/// Per ADR-017, wings are node rows in the `nodes` table and drawers
+/// reference their parent room via `parent_node_id`.
 /// The hint memory is a NORMAL drawer: embedded, recallable, user-deletable.
 pub const HINT_ROOM: &str = "AI_Charter_Hint";
 
@@ -43,7 +44,8 @@ pub const HINT_ADDED_BY: &str = "estate-provision";
 /// `AI_Charter_Hint` room so recalls against that wing surface its purpose.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WingDefinition {
-    /// The wing name (becomes `drawer.wing` and the DISTINCT wing identifier).
+    /// The wing name (used as the node `display_name` for the wing node in the
+    /// ADR-017 `nodes` table).
     pub name: &'static str,
     /// The hint text (becomes `drawer.content` in the `AI_Charter_Hint` room).
     pub hint: &'static str,

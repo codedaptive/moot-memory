@@ -7,7 +7,7 @@
 //!   §1 Disabled gate: no metric emitted when monitoring is OFF.
 //!   §2 Enabled gate: metrics emitted when monitoring is ON.
 //!   §3 Metric shapes: names, tags, and values match the corpuskit.* spec.
-//!   §4 Conformance: results are byte-identical with monitoring on and off.
+//!   §4 Conformance: result count, chunk ids, chunk text, and fused score match with monitoring on and off.
 //!
 //! Notes on global state isolation:
 //!   BundleStore::insert and recall() call Intellectus via the report! macro,
@@ -41,16 +41,11 @@ use substrate_types::hlc::HLC;
 use uuid::Uuid;
 use vectorkit::VectorStore;
 
-// Process-wide serialisation lock. All tests in this file acquire this lock
-// for their entire duration. Additionally, tests in bundle_store_tests.rs,
-// hybrid_recall_tests.rs, and corpus_tests.rs that call BundleStore::insert
-// or recall also hold this lock so their emissions cannot contaminate the
-// capturing sink installed here. All files define the same GLOBAL_LOCK
-// static — Rust integration test binaries are linked per-file, so each
-// test file gets its own static. That is fine: what matters is that all
-// tests WITHIN this binary are serialised, which `.serialized` + file-level
-// statics achieves. Cross-file serialisation is enforced by the per-file
-// statics in bundle_store_tests.rs, corpus_tests.rs, and hybrid_recall_tests.rs.
+// Process-wide serialisation lock for tests in this file. All tests in
+// this file acquire this lock for their entire duration. This static is
+// local to this test binary; the other files named above (bundle_store_tests.rs,
+// hybrid_recall_tests.rs, corpus_tests.rs) each define their own GLOBAL_LOCK
+// static per Rust per-file test binary linking.
 static GLOBAL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn global_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -607,7 +602,7 @@ fn recall_results_unchanged_by_telemetry() {
     Intellectus::install(Arc::new(NoOpSink));
 }
 
-/// insert + get round-trip is byte-identical regardless of monitoring state.
+/// insert + get round-trip returns the same chunk count and content regardless of monitoring state.
 #[test]
 fn insert_get_round_trip_unchanged_by_telemetry() {
     let _guard = global_lock();

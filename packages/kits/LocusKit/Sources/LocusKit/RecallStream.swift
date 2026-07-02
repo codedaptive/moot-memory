@@ -13,12 +13,11 @@ import Foundation
 /// `.full` becomes distinct from `.structured` only when the blob
 /// tier ships in a later mission.
 ///
-/// This sequence carries already-fetched rows. The compiled-filter /
+/// This sequence carries already-fetched rows. A compiled-filter /
 /// plan-driven page generator that streams from `DrawerStore`
-/// page-by-page ships in LOCI_V035_16 — at that point the constructor
-/// will take a plan rather than a pre-filtered `[Drawer]`. The page
-/// boundary contract (`pageIndex`, `isLast`, hydration semantics)
-/// matches the spec already and will not change.
+/// page-by-page is not yet implemented; the constructor takes a
+/// pre-filtered `[Drawer]`. The page boundary contract (`pageIndex`,
+/// `isLast`, hydration semantics) matches the spec.
 public struct RecallStream: AsyncSequence, Sendable {
     public typealias Element = RecallPage
 

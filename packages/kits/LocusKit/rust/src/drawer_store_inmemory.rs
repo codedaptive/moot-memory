@@ -380,7 +380,8 @@ impl DrawerStoreCore {
         Ok(())
     }
 
-    /// Find an active predecessor (state cluster < 3) sharing the
+    /// Find an active predecessor (Cluster-A state; raw < 16 per
+    /// `RowState::ACTIVE_CLUSTER_UPPER_BOUND_RAW`) sharing the
     /// drawer's `lineage_id`, excluding the row being inserted.
     /// cascade.
     fn find_active_predecessor(
@@ -415,14 +416,30 @@ impl DrawerStoreCore {
     }
 
     ///
-    /// In the Swift port this whole sequence runs inside
-    /// `storage.transaction(isolation: .serializable)`. The Rust
-    /// persistence-kit has no transaction surface yet (its `storage.rs`
-    /// doc defers that to the SQLite backend); the InMemory backend's
-    /// internal `Mutex` serialises operations, which gives the same
-    /// effective atomicity against this single backend. When
-    /// persistence-kit grows transactions, wrap this block; behaviour
-    /// stays the same.
+    /// ## Atomicity (Swift vs Rust)
+    ///
+    /// In the Swift port the successor drawer INSERT + genesis audit event and
+    /// the supersedes tunnel INSERT share a single
+    /// `storage.transaction(isolation: .serializable)` so both land atomically
+    /// or both roll back.  The predecessor state flip (`mutate_state`) is a
+    /// separate operation that runs AFTER the transaction.
+    ///
+    /// The Rust PersistenceKit has no transaction surface yet (`storage.rs`
+    /// defers that to the SQLite backend).  To preserve failure atomicity
+    /// between the successor INSERT and the tunnel INSERT this port:
+    ///
+    /// 1. Inserts the successor drawer + genesis audit event (`gated_capture`).
+    /// 2. Builds and inserts the tunnel.
+    /// 3. If the tunnel insert fails, performs a **compensating delete** of the
+    ///    just-inserted drawer row so no orphaned successor is left visible to
+    ///    queries.  The genesis audit event cannot be compensated (append-only),
+    ///    but the drawer row — which is the entity queries search — is removed.
+    /// 4. Flips the predecessor state via `mutate_state` only AFTER the tunnel
+    ///    failure does not leave the predecessor stuck in `Superseded` without
+    ///    an active successor.
+    ///
+    /// When PersistenceKit grows a transaction surface, replace steps 1–3 with
+    /// a single transaction block; behaviour stays the same.
     fn add_drawer_with_cascade(
         &self,
         new_drawer: &Drawer,
@@ -430,12 +447,9 @@ impl DrawerStoreCore {
     ) -> Result<(), LocusKitError> {
         let row_store = self.storage.row_store();
 
-        // Successor's gated capture (genesis) event + projection row.
-        self.gated_capture(new_drawer, new_drawer.filed_at)?;
-
-        // Read the predecessor's prior adjective + location so the
-        // audit row's prior_value is exactly what the flip overwrites
-        // and the supersedes tunnel carries the predecessor's place.
+        // Read the predecessor's location before any writes so the tunnel
+        // carries the predecessor's place and the state-flip audit row
+        // records the exact prior adjective value.
         let prior_rows = row_store
             .query(
                 T_DRAWERS,
@@ -472,28 +486,13 @@ impl DrawerStoreCore {
             .cloned()
             .unwrap_or_default();
 
-        // Flip the predecessor active → superseded via the validated
-        // state path. Earlier this smuggled the state through a manual
-        // adjective-bitmap write + bitmap_audit row, bypassing the
-        // transition automaton (F8 anti-pattern, same as withdraw). The
-        // write gate now forbids moving state through a field edit, so
-        // the supersede transition MUST go through mutate_state, which
-        // validates active --supersede--> superseded and appends the
-        // sealed audit event. changed_by is the triggering successor's
-        // author (its insertion caused the flip).
-        self.mutate_state(
-            prior_id,
-            State::Superseded,
-            RowVerb::Supersede,
-            &new_drawer.added_by,
-            Some(&format!(
-                "supersession cascade, lineageID {}",
-                new_drawer.lineage_id
-            )),
-            new_drawer.filed_at,
-        )?;
+        // Step 1: Successor's gated capture (genesis) event + projection row.
+        self.gated_capture(new_drawer, new_drawer.filed_at)?;
 
-        // Directional supersedes tunnel: new → prior.
+        // Step 2: Directional supersedes tunnel: new → prior.
+        // This insert and the gated_capture above are logically atomic:
+        // if the tunnel insert fails, we compensate by deleting the drawer
+        // row (step 3 below) so no orphaned successor is visible to queries.
         let mut tunnel = Tunnel::new(
             format!("supersedes:{}:{}", new_drawer.id, prior_id),
             source_names.0.clone(),
@@ -507,9 +506,46 @@ impl DrawerStoreCore {
         tunnel.kind = TunnelKind::Supersedes;
         tunnel.source_drawer_id = Some(new_drawer.id.clone());
         tunnel.target_drawer_id = Some(prior_id.to_string());
-        row_store
+        if let Err(tunnel_err) = row_store
             .insert(T_TUNNELS, tunnel_values(&tunnel))
-            .map_err(map_storage_err)?;
+            .map_err(map_storage_err)
+        {
+            // Step 3: Compensating delete — remove the successor drawer row
+            // so no orphaned successor is left in the database.  The genesis
+            // audit event cannot be compensated (the audit_log is append-only)
+            // but the drawer row — which is what lineage and recall queries
+            // search — is removed.  When PersistenceKit gains transaction
+            // support, replace this compensation with a proper rollback.
+            let _ = row_store.delete(
+                T_DRAWERS,
+                &StoragePredicate::Eq(
+                    Column::new(T_DRAWERS, "id"),
+                    TypedValue::Text(new_drawer.id.clone()),
+                ),
+            );
+            return Err(tunnel_err);
+        }
+
+        // Step 4: Flip the predecessor active → superseded via the validated
+        // ordering: state flip is not part of the successor+tunnel transaction
+        // but follows it).  Earlier code smuggled the state through a manual
+        // adjective-bitmap write + bitmap_audit row, bypassing the transition
+        // automaton (F8 anti-pattern, same as withdraw).  The write gate now
+        // forbids moving state through a field edit, so the supersede
+        // transition MUST go through mutate_state, which validates
+        // active --supersede--> superseded and appends the sealed audit event.
+        // changed_by is the triggering successor's author.
+        self.mutate_state(
+            prior_id,
+            State::Superseded,
+            RowVerb::Supersede,
+            &new_drawer.added_by,
+            Some(&format!(
+                "supersession cascade, lineageID {}",
+                new_drawer.lineage_id
+            )),
+            new_drawer.filed_at,
+        )?;
 
         Ok(())
     }
@@ -618,7 +654,7 @@ impl DrawerStoreCore {
         };
         let udc = self.read_drawer_udc(drawer_id)?;
         let anchor = substrate_lib::verbs::LatticeAnchor::udc(&udc);
-        let stamp = self.hlc.lock().unwrap().send(now * 1000);
+        let stamp = self.hlc.lock().unwrap().send(now);
 
         let event = audit_gate::admit(
             self.estate_uuid.as_u128(),
@@ -709,8 +745,13 @@ impl DrawerStoreCore {
             }
         }
 
-        let anchor = substrate_lib::verbs::LatticeAnchor::udc(&drawer.udc_code);
-        let stamp = self.hlc.lock().unwrap().send(now * 1000);
+        // Carry the drawer's varied Q-ID into the sealed anchor (not just the
+        // often-uniform UDC class) so the matrix O/T lanes get per-content signal.
+        let anchor = substrate_lib::verbs::LatticeAnchor::udc_qid(
+            &drawer.udc_code,
+            drawer.wikidata_qid.as_deref().unwrap_or(""),
+        );
+        let stamp = self.hlc.lock().unwrap().send(now);
 
         let event = audit_gate::admit(
             self.estate_uuid.as_u128(),
@@ -1307,16 +1348,24 @@ impl DrawerStore for DrawerStoreCore {
         // a poison filedAt like "+58432-..." from a bad Vault import or
         // millisecond-vs-seconds epoch confusion) are skipped at the SQLite
         // cursor level and do not abort the entire corpus scan.
+        //
+        // Compound sort key: (filedAt ASC, id ASC). The id secondary term
+        // breaks ties within the same filedAt so the result is a deterministic
+        // total order. id is the declared TEXT primary key of the drawers
+        // table — present in SQLite, PostgreSQL, and InMemory backends.
+        // Using id (not rowid) makes the tie-break portable to PostgreSQL where
+        // rowid is undefined (c-recall-portable fix). DESC variants use
+        // (filedAt DESC, id DESC), which is exactly reverse(ASC).
         let (rows, _skipped) = self
             .storage
             .row_store()
             .query_skip_corrupt(
                 T_DRAWERS,
                 None,
-                &[OrderClause::new(
-                    Column::new(T_DRAWERS, "filedAt"),
-                    OrderDirection::Ascending,
-                )],
+                &[
+                    OrderClause::new(Column::new(T_DRAWERS, "filedAt"), OrderDirection::Ascending),
+                    OrderClause::new(Column::new(T_DRAWERS, "id"), OrderDirection::Ascending),
+                ],
                 None,
                 None,
             )
@@ -1341,6 +1390,11 @@ impl DrawerStore for DrawerStoreCore {
         // `all_drawers_bounded_projected`, which uses `RowStore::query_projected`
         // to omit the content column. The behavioral contract (bounded scan,
         // filedAt order, correct result set) matches the Swift port.
+        //
+        // Compound sort key: (filedAt ASC, id ASC) for deterministic total
+        // order — ties in filedAt are broken by id (declared TEXT primary key,
+        // portable across SQLite + PostgreSQL + InMemory). DESC variant uses
+        // the same compound key with both directions flipped.
         let _tel_start = std::time::Instant::now();
 
         let (rows, _skipped) = self
@@ -1349,10 +1403,10 @@ impl DrawerStore for DrawerStoreCore {
             .query_skip_corrupt(
                 T_DRAWERS,
                 None,
-                &[OrderClause::new(
-                    Column::new(T_DRAWERS, "filedAt"),
-                    OrderDirection::Ascending,
-                )],
+                &[
+                    OrderClause::new(Column::new(T_DRAWERS, "filedAt"), OrderDirection::Ascending),
+                    OrderClause::new(Column::new(T_DRAWERS, "id"), OrderDirection::Ascending),
+                ],
                 limit,
                 None,
             )
@@ -1387,6 +1441,10 @@ impl DrawerStore for DrawerStoreCore {
         // excluded) do not abort the scan. Skipped rows are logged at the
         // storage level; decode_rows_skip_corrupt handles any remaining
         // drawer_from_row failures.
+        //
+        // Compound sort key: (filedAt ASC, id ASC) — same deterministic total
+        // order as all_drawers_bounded (full path) and all_drawers. id is the
+        // declared TEXT primary key, portable across all backends.
         let (rows, _skipped) = self
             .storage
             .row_store()
@@ -1394,10 +1452,10 @@ impl DrawerStore for DrawerStoreCore {
                 T_DRAWERS,
                 DRAWER_STRUCTURED_COLUMNS,
                 None,
-                &[OrderClause::new(
-                    Column::new(T_DRAWERS, "filedAt"),
-                    OrderDirection::Ascending,
-                )],
+                &[
+                    OrderClause::new(Column::new(T_DRAWERS, "filedAt"), OrderDirection::Ascending),
+                    OrderClause::new(Column::new(T_DRAWERS, "id"), OrderDirection::Ascending),
+                ],
                 limit,
                 None,
             )
@@ -1411,6 +1469,90 @@ impl DrawerStore for DrawerStoreCore {
             drawers.len(),
             &self.estate_uuid,
             "all_bounded_structured",
+        );
+        Ok(drawers)
+    }
+
+    // -----------------------------------------------------------------
+    // P4-secfix: DESC-ordered bounded scan overrides.
+    //
+    // The trait defaults for all_drawers_bounded_desc and
+    // all_drawers_bounded_projected_desc call all_drawers() then reverse
+    // in memory — correct but O(N). These overrides push the ORDER BY
+    // Descending + LIMIT directly to the storage layer so only `limit`
+    // rows are materialised, matching the efficiency of the ASC path.
+    // -----------------------------------------------------------------
+
+    fn all_drawers_bounded_desc(&self, limit: Option<usize>) -> Result<Vec<Drawer>, LocusKitError> {
+        // Newest-first bounded scan. Supplies (filedAt DESC, id DESC) to the
+        // storage layer so the most-recently-filed drawers are returned within
+        // the cap. The id secondary term (declared TEXT primary key) breaks
+        // ties within the same filedAt, making this the exact reverse of the
+        // (filedAt ASC, id ASC) total order from all_drawers / all_drawers_bounded.
+        // Using id (not rowid) is portable to PostgreSQL (c-recall-portable fix).
+        let _tel_start = std::time::Instant::now();
+
+        let (rows, _skipped) = self
+            .storage
+            .row_store()
+            .query_skip_corrupt(
+                T_DRAWERS,
+                None,
+                &[
+                    OrderClause::new(Column::new(T_DRAWERS, "filedAt"), OrderDirection::Descending),
+                    OrderClause::new(Column::new(T_DRAWERS, "id"), OrderDirection::Descending),
+                ],
+                limit,
+                None,
+            )
+            .map_err(map_storage_err)?;
+        let drawers = decode_rows_skip_corrupt(&rows, "all_drawers_bounded_desc")?;
+
+        crate::telemetry::emit_drawer_query(
+            &_tel_start,
+            0.0,
+            drawers.len(),
+            &self.estate_uuid,
+            "all_bounded_desc",
+        );
+        Ok(drawers)
+    }
+
+    fn all_drawers_bounded_projected_desc(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<Drawer>, LocusKitError> {
+        // Newest-first no-blob bounded scan. Combines (filedAt DESC, id DESC)
+        // ordering with the structured projection (content column omitted) for
+        // the common recall path where content predicates are absent and
+        // hydration is Structured. The id tie-break (declared TEXT primary key)
+        // makes this the exact reverse of the ASC projected path, and is
+        // portable to PostgreSQL where rowid is undefined (c-recall-portable).
+        let _tel_start = std::time::Instant::now();
+
+        let (rows, _skipped) = self
+            .storage
+            .row_store()
+            .query_projected_skip_corrupt(
+                T_DRAWERS,
+                DRAWER_STRUCTURED_COLUMNS,
+                None,
+                &[
+                    OrderClause::new(Column::new(T_DRAWERS, "filedAt"), OrderDirection::Descending),
+                    OrderClause::new(Column::new(T_DRAWERS, "id"), OrderDirection::Descending),
+                ],
+                limit,
+                None,
+            )
+            .map_err(map_storage_err)?;
+        let drawers = decode_rows_skip_corrupt(&rows, "all_drawers_bounded_projected_desc")?;
+
+        crate::telemetry::emit_drawer_query(
+            &_tel_start,
+            0.0,
+            drawers.len(),
+            &self.estate_uuid,
+            "all_bounded_structured_desc",
         );
         Ok(drawers)
     }
@@ -1549,7 +1691,7 @@ impl DrawerStore for DrawerStoreCore {
             &[0, 1, 2, 3, 16, 17, 18, 19, 32, 33],
         );
         // One tick per logical mutation.
-        let stamp = self.hlc.lock().unwrap().send(now * 1000);
+        let stamp = self.hlc.lock().unwrap().send(now);
         let event = audit_gate::admit(
             self.estate_uuid.as_u128(),
             substrate_lib::verbs::RowId(row_uuid.as_u128()),
@@ -1690,7 +1832,7 @@ impl DrawerStore for DrawerStoreCore {
         let new_flags_value = (prior_flags_value & 0b011) | 0b100;
 
         // One tick per logical mutation.
-        let stamp = self.hlc.lock().unwrap().send(now * 1000);
+        let stamp = self.hlc.lock().unwrap().send(now);
         let event = audit_gate::admit(
             self.estate_uuid.as_u128(),
             substrate_lib::verbs::RowId(row_uuid.as_u128()),
@@ -1785,7 +1927,7 @@ impl DrawerStore for DrawerStoreCore {
                 let sib_flags_value = bit_field::extract_field(sib_bitmap, 24, 3);
                 let sib_new_flags = (sib_flags_value & 0b011) | 0b100;
 
-                let sib_stamp = self.hlc.lock().unwrap().send(now * 1000);
+                let sib_stamp = self.hlc.lock().unwrap().send(now);
                 let sib_result = audit_gate::admit(
                     self.estate_uuid.as_u128(),
                     substrate_lib::verbs::RowId(sib_uuid.as_u128()),
@@ -1896,7 +2038,7 @@ impl DrawerStore for DrawerStoreCore {
         // consumers see the storage-level expunge without requiring a
         // distinct ARIA verb.
         let _ = drawer_id; // rowId is carried by success_event.row_id
-        let stamp = self.hlc.lock().unwrap().send(now * 1000);
+        let stamp = self.hlc.lock().unwrap().send(now);
         let event_id = substrate_lib::audit_gate::content_id(
             success_event.estate_uuid,
             success_event.row_id,
@@ -1948,7 +2090,7 @@ impl DrawerStore for DrawerStoreCore {
         let anchor = substrate_lib::verbs::LatticeAnchor::udc(&udc);
         let after_bitmaps: (i64, i64, i64) = (adj_bitmap, op_bitmap, prov_bitmap);
 
-        let stamp = self.hlc.lock().unwrap().send(now * 1000);
+        let stamp = self.hlc.lock().unwrap().send(now);
         let event_id = substrate_lib::audit_gate::content_id(
             self.estate_uuid.as_u128(),
             substrate_lib::verbs::RowId(row_uuid.as_u128()),
@@ -1975,6 +2117,29 @@ impl DrawerStore for DrawerStoreCore {
             .audit_log()
             .append(pk_audit_event_from(&orphan))
             .map_err(map_storage_err)
+    }
+
+    /// Zero the `content` column for every row in the `drawers` table.
+    /// Used by `GLKCoordinator::destroy` to erase all drawer content blobs
+    /// from LocusKit's SQLite storage as part of the estate destruction
+    /// sequence (secfix/ws2-coredelete). Runs before `close()` so the
+    /// storage connection is still live.
+    ///
+    /// The operation is a bulk UPDATE with a `1=1` predicate — one SQL
+    /// statement regardless of row count. On the InMemory backend the
+    /// predicate resolves to `StoragePredicate::IsTrue`.
+    ///
+    /// Does NOT delete the manifest row or audit events — those remain as
+    /// a forensic record that the estate existed. The SQLite FILE is
+    /// deleted by the application layer (moot-mgr) after this call returns.
+    fn wipe_all_content(&self) -> Result<(), LocusKitError> {
+        let row_store = self.storage.row_store();
+        let mut values = std::collections::BTreeMap::new();
+        values.insert("content".to_string(), TypedValue::Text(String::new()));
+        row_store
+            .update(T_DRAWERS, values, &StoragePredicate::IsTrue)
+            .map_err(map_storage_err)?;
+        Ok(())
     }
 
     fn reanchor_gated(
@@ -2019,7 +2184,7 @@ impl DrawerStore for DrawerStoreCore {
         // Reanchor is a placement move — no FieldWrites. The gate records the
         // anchor delta via prior/after anchor and validates verb=Mutate
         // (active→active self-loop). Empty writes slice is correct here.
-        let stamp = self.hlc.lock().unwrap().send(now * 1000);
+        let stamp = self.hlc.lock().unwrap().send(now);
         let event = audit_gate::admit(
             self.estate_uuid.as_u128(),
             substrate_lib::verbs::RowId(row_uuid.as_u128()),
@@ -3713,7 +3878,12 @@ impl DrawerStore for DrawerStoreCore {
             return Ok(Vec::new());
         }
 
-        let window_start = ending_at - (bucket_count as i64) * bucket_seconds;
+        // `fingerprintBitSeries(bucketSeconds:)`), while `ending_at` and the
+        // captured `event_time` values are epoch MILLISECONDS (ADR-023).
+        // Convert the width to ms so all three share one unit — Swift performs
+        // the equivalent in Date-space via `addingTimeInterval(-seconds)`.
+        let bucket_millis = bucket_seconds * 1000;
+        let window_start = ending_at - (bucket_count as i64) * bucket_millis;
         let pred = StoragePredicate::all(vec![
             StoragePredicate::any(vec![
                 StoragePredicate::And(vec![
@@ -3759,7 +3929,7 @@ impl DrawerStore for DrawerStoreCore {
 
         Ok((0..bucket_count)
             .map(|i| {
-                let bucket_lower = ending_at - (bucket_count - i) as i64 * bucket_seconds;
+                let bucket_lower = ending_at - (bucket_count - i) as i64 * bucket_millis;
                 let is_last = i == bucket_count - 1;
                 captures.iter().any(|(t, fp)| {
                     let in_bucket = if is_last {
@@ -3768,7 +3938,7 @@ impl DrawerStore for DrawerStoreCore {
                     } else {
                         // [lower, upper): exclusive upper so edge belongs to later bucket.
                         let bucket_upper =
-                            ending_at - (bucket_count - i - 1) as i64 * bucket_seconds;
+                            ending_at - (bucket_count - i - 1) as i64 * bucket_millis;
                         *t >= bucket_lower && *t < bucket_upper
                     };
                     in_bucket && temporal_bit_set(fp, bit)
@@ -3966,6 +4136,28 @@ impl DrawerStore for InMemoryDrawerStore {
     ) -> Result<Vec<crate::drawer::Drawer>, LocusKitError> {
         self.inner.all_drawers_bounded_projected(limit)
     }
+
+    // Forwarding overrides for the DESC bounded scan methods. Without these,
+    // Arc<dyn DrawerStore> callers hit the O(estate) trait default (load
+    // all_drawers, reverse, truncate) rather than DrawerStoreCore's efficient
+    // (filed_at DESC, id DESC, LIMIT) path. Forwarding here ensures the
+    // InMemoryDrawerStore wrapper routes correctly for in-process estates
+    // (c-recall-portable fix).
+
+    fn all_drawers_bounded_desc(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<crate::drawer::Drawer>, LocusKitError> {
+        self.inner.all_drawers_bounded_desc(limit)
+    }
+
+    fn all_drawers_bounded_projected_desc(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<crate::drawer::Drawer>, LocusKitError> {
+        self.inner.all_drawers_bounded_projected_desc(limit)
+    }
+
     fn drawer_ids(&self) -> Result<Vec<crate::estate_types::RowID>, LocusKitError> {
         self.inner.drawer_ids()
     }
@@ -4282,6 +4474,9 @@ impl DrawerStore for InMemoryDrawerStore {
         now: i64,
     ) -> Result<(), LocusKitError> {
         self.inner.seal_expunge_orphan_for_sweep(drawer_id, changed_by, now)
+    }
+    fn wipe_all_content(&self) -> Result<(), LocusKitError> {
+        self.inner.wipe_all_content()
     }
     fn list_wings(&self) -> Result<Vec<crate::summaries::WingSummary>, LocusKitError> {
         self.inner.list_wings()
@@ -5265,22 +5460,27 @@ fn map_storage_err(e: persistence_kit::error::StorageError) -> LocusKitError {
 // (`.withInternetDateTime + .withFractionalSeconds`) so a value
 // written by either side round-trips through the other.
 
-fn format_iso8601(epoch_seconds: i64) -> String {
-    // Minimal ISO8601-Z formatter. Avoids pulling in chrono / time at
-    // this layer; the manifest stores two timestamps and they only
-    // need round-trip equality with the parser below.
-    let (year, month, day, hour, minute, second) = epoch_to_components(epoch_seconds);
+fn format_iso8601(epoch_ms: i64) -> String {
+    // Minimal ISO8601-Z formatter over epoch MILLISECONDS (ADR-023). Avoids
+    // pulling in chrono / time at this layer; the manifest stores two
+    // timestamps and they only need round-trip equality with the parser below.
+    // The calendar helper is seconds-based, so split the millisecond fraction
+    // out here and emit it as the 3-digit `.SSS` field Swift's LKISO8601 uses.
+    let secs = epoch_ms.div_euclid(1000);
+    let millis = epoch_ms.rem_euclid(1000);
+    let (year, month, day, hour, minute, second) = epoch_to_components(secs);
     format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.000Z",
-        year, month, day, hour, minute, second
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        year, month, day, hour, minute, second, millis
     )
 }
 
 fn parse_iso8601(s: &str) -> Option<i64> {
     // Accept "YYYY-MM-DDTHH:MM:SS[.fff]Z" — the shape `format_iso8601`
     // emits and the shape Swift's `ISO8601DateFormatter`
-    // `.withInternetDateTime` produces. Fractional seconds are parsed
-    // and dropped (epoch seconds, not subsecond).
+    // `.withInternetDateTime` produces. Returns epoch MILLISECONDS
+    // (ADR-023): the fractional-seconds field is parsed and retained as the
+    // millisecond component.
     let bytes = s.as_bytes();
     if bytes.len() < 20 {
         return None;
@@ -5291,7 +5491,19 @@ fn parse_iso8601(s: &str) -> Option<i64> {
     let hour: i64 = std::str::from_utf8(&bytes[11..13]).ok()?.parse().ok()?;
     let minute: i64 = std::str::from_utf8(&bytes[14..16]).ok()?.parse().ok()?;
     let second: i64 = std::str::from_utf8(&bytes[17..19]).ok()?.parse().ok()?;
-    Some(components_to_epoch(year, month, day, hour, minute, second))
+    // Optional ".fff" fractional field → milliseconds. Swift's LKISO8601
+    // always emits exactly 3 digits; accept 1–3 and left-justify to ms.
+    let millis: i64 = if bytes.len() > 20 && bytes[19] == b'.' {
+        let frac_end = 20 + bytes[20..].iter().take_while(|c| c.is_ascii_digit()).count();
+        let digits = std::str::from_utf8(&bytes[20..frac_end]).ok()?;
+        let mut ms: i64 = digits.parse().ok()?;
+        // Scale to exactly 3 fractional digits (e.g. ".4" → 400ms, ".45" → 450ms).
+        for _ in digits.len()..3 { ms *= 10; }
+        ms
+    } else {
+        0
+    };
+    Some(components_to_epoch(year, month, day, hour, minute, second) * 1000 + millis)
 }
 
 /// Days from 0000-03-01 to year-month-1. The shifted year start
@@ -5367,6 +5579,8 @@ fn pk_audit_event_from(e: &substrate_lib::verbs::AuditEvent) -> PkAuditEvent {
         after_provenance: e.after_bitmaps.2,
         before_lattice_anchor: e.before_lattice_anchor.map(|a| a.udc_code),
         after_lattice_anchor: e.after_lattice_anchor.udc_code,
+        before_lattice_qid: e.before_lattice_anchor.map(|a| a.qid_pointer),
+        after_lattice_qid: e.after_lattice_anchor.qid_pointer,
         actor: e.actor.clone(),
         // reason is threaded from the verb call site through the substrate
         // AuditEvent and forwarded here to PersistenceKit's flat type.
@@ -5397,10 +5611,13 @@ pub(crate) fn substrate_audit_event_from(e: &PkAuditEvent) -> substrate_lib::ver
         verb: e.verb.clone(),
         before_bitmaps: before,
         after_bitmaps: (e.after_adjective, e.after_operational, e.after_provenance),
-        before_lattice_anchor: e
-            .before_lattice_anchor
-            .map(|a| substrate_lib::verbs::LatticeAnchor::new(a, 0)),
-        after_lattice_anchor: substrate_lib::verbs::LatticeAnchor::new(e.after_lattice_anchor, 0),
+        before_lattice_anchor: e.before_lattice_anchor.map(|a| {
+            substrate_lib::verbs::LatticeAnchor::new(a, e.before_lattice_qid.unwrap_or(0))
+        }),
+        after_lattice_anchor: substrate_lib::verbs::LatticeAnchor::new(
+            e.after_lattice_anchor,
+            e.after_lattice_qid,
+        ),
         actor: e.actor.clone(),
         // reason is threaded back through the bridge for full round-trip fidelity.
         reason: e.reason.clone(),
@@ -5889,7 +6106,7 @@ mod tests {
         store.add_drawer(&prior, NOW).unwrap();
         store.add_drawer(&next, NOW + 100).unwrap();
 
-        // Predecessor state nibble flipped to Superseded (raw 16).
+        // Predecessor 6-bit state field set to Superseded (raw 16).
         let p_back = store
             .get_drawer("11111111-1111-4111-8111-111111111111")
             .unwrap()
@@ -5926,6 +6143,73 @@ mod tests {
         assert_eq!(
             tunnel.target_drawer_id.as_deref(),
             Some("11111111-1111-4111-8111-111111111111")
+        );
+    }
+
+    /// B1 Finding #3 regression — atomic cascade ordering.
+    ///
+    /// Pre-fix: `mutate_state` (predecessor flip to Superseded) ran BEFORE the
+    /// `supersedes` tunnel insert. A tunnel insert failure would leave the
+    /// predecessor permanently Superseded with no active successor — a silent
+    /// lineage corruption. Post-fix ordering:
+    ///   1. `gated_capture` (new drawer + audit event)
+    ///   2. Tunnel insert
+    ///   3. Compensating delete of new drawer on tunnel failure
+    ///   4. `mutate_state` (predecessor flip) ONLY if tunnel insert succeeded
+    ///
+    /// This test verifies the post-fix happy path: all three invariants hold
+    /// simultaneously — new drawer present, tunnel filed, predecessor flipped.
+    /// If the ordering were wrong (flip before tunnel), a failed tunnel insert
+    /// in step 2 would leave the predecessor Superseded with the new drawer
+    /// absent — a state that cannot be verified by a success-path test but is
+    /// prevented structurally by the ordering change.
+    ///
+    /// (Full fault-injection test requires a FailingStorage fixture not yet
+    /// present in the test harness. The happy-path test regression-guards the
+    /// fix did not break the success path. See planned B3 fault-injection task.)
+    #[test]
+    fn cascade_ordering_drawer_tunnel_and_predecessor_flip_all_consistent() {
+        let store = open_store();
+        let lineage = Uuid::new_v4();
+        let mut prior = sample_drawer("aaaa1111-0000-4000-8000-000000000001", "w", "k", "v1");
+        prior.lineage_id = lineage;
+        prior.filed_at = NOW;
+        let mut next = sample_drawer("aaaa2222-0000-4000-8000-000000000002", "w", "k", "v2");
+        next.lineage_id = lineage;
+        next.filed_at = NOW + 50;
+
+        store.add_drawer(&prior, NOW).unwrap();
+        store.add_drawer(&next, NOW + 50).unwrap();
+
+        // Post-condition 1: new drawer is present.
+        let new_row = store
+            .get_drawer("aaaa2222-0000-4000-8000-000000000002")
+            .unwrap()
+            .expect("new drawer must be present");
+        assert_eq!(new_row.content, "v2");
+
+        // Post-condition 2: supersedes tunnel was filed (new → prior).
+        let tunnel_key = format!(
+            "supersedes:{}:{}",
+            "aaaa2222-0000-4000-8000-000000000002",
+            "aaaa1111-0000-4000-8000-000000000001"
+        );
+        let tunnel = store
+            .get_tunnel(&tunnel_key)
+            .unwrap()
+            .expect("supersedes tunnel must be filed");
+        assert_eq!(tunnel.kind, TunnelKind::Supersedes);
+
+        // Post-condition 3: predecessor state flipped to Superseded — ONLY AFTER
+        // the tunnel insert, so the lineage graph is always consistent.
+        let prior_row = store
+            .get_drawer("aaaa1111-0000-4000-8000-000000000001")
+            .unwrap()
+            .expect("predecessor must still be present");
+        assert_eq!(
+            prior_row.adjective_bitmap & 0x3F,
+            State::Superseded.raw_value(),
+            "predecessor must be Superseded after a successful cascade"
         );
     }
 
@@ -6745,8 +7029,11 @@ mod tests {
 
     #[test]
     fn iso8601_known_epoch_components() {
-        // 2023-11-14T22:13:20.000Z (the epoch 1_700_000_000 second).
-        assert_eq!(format_iso8601(1_700_000_000), "2023-11-14T22:13:20.000Z");
+        // 2023-11-14T22:13:20.000Z (epoch 1_700_000_000_000 milliseconds, ADR-023).
+        assert_eq!(format_iso8601(1_700_000_000_000), "2023-11-14T22:13:20.000Z");
+        // A sub-second value round-trips its millisecond fraction.
+        assert_eq!(format_iso8601(1_700_000_000_437), "2023-11-14T22:13:20.437Z");
+        assert_eq!(parse_iso8601("2023-11-14T22:13:20.437Z"), Some(1_700_000_000_437));
         // 1970-01-01T00:00:00.000Z (the epoch zero).
         assert_eq!(format_iso8601(0), "1970-01-01T00:00:00.000Z");
         assert_eq!(parse_iso8601("1970-01-01T00:00:00.000Z"), Some(0));
@@ -7004,29 +7291,29 @@ mod tests {
     // HLC unit contract — physical_time must be milliseconds
     //
     // Swift feeds HLCGenerator::send() in milliseconds (DrawerStore.swift:
-    // `let nowMillis = Int64(now.timeIntervalSince1970 * 1000)`).
-    // Rust callers pass epoch-seconds; the fix multiplies by 1000 at each
-    // send() site. These tests verify the contract post-fix so a future
-    // regression is caught at CI rather than at federation time.
+    // `let nowMillis = Int64(now.timeIntervalSince1970 * 1000)`). Under ADR-023
+    // Rust callers also pass epoch-milliseconds directly (the `now` clock is ms),
+    // so send() receives ms with no conversion. These tests verify the contract
+    // so a future regression is caught at CI rather than at federation time.
     //
     // Implementation note: we read the HLC back from the audit log via
     // `store.storage().audit_log().events_for_row(uuid)` — the same
     // pattern used by existing audit-log tests in this module.
     // -----------------------------------------------------------------
 
-    /// After add_drawer with a known `now` in epoch seconds, the HLC
-    /// physical_time in the genesis audit event must be the millisecond
-    /// magnitude (now * 1000), and physical_seconds_since_epoch() must
-    /// round-trip back to the original seconds value.
+    /// After add_drawer with a known `now` in epoch milliseconds, the HLC
+    /// physical_time in the genesis audit event must equal that millisecond
+    /// value, and physical_seconds_since_epoch() must round-trip back to the
+    /// original seconds value.
     #[test]
     fn hlc_physical_time_is_milliseconds_after_capture() {
-        // A concrete epoch-seconds value (2025-12-01 ~00:00 UTC).
-        const CAPTURE_SECS: i64 = 1_765_000_000;
-        const CAPTURE_MILLIS: i64 = CAPTURE_SECS * 1000;
+        // A concrete epoch-milliseconds value (2025-12-06 ~00:00 UTC).
+        const CAPTURE_MILLIS: i64 = 1_765_000_000_000;
+        const CAPTURE_SECS: i64 = CAPTURE_MILLIS / 1000;
 
-        let store = open_store_at(CAPTURE_SECS);
+        let store = open_store_at(CAPTURE_MILLIS);
         let d = sample_drawer("hlc-ms-d1", "wing", "room", "content");
-        store.add_drawer(&d, CAPTURE_SECS).unwrap();
+        store.add_drawer(&d, CAPTURE_MILLIS).unwrap();
 
         let row_uuid = Uuid::parse_str(&tid("hlc-ms-d1")).unwrap();
         let events = store
@@ -7065,13 +7352,14 @@ mod tests {
     /// This validates the HLC generator works correctly with millis as input.
     #[test]
     fn hlc_monotonic_within_same_second() {
-        const CAPTURE_SECS: i64 = 1_765_000_000;
+        // Epoch MILLISECONDS (ADR-023) — the `now` the store and HLC take.
+        const CAPTURE_MILLIS: i64 = 1_765_000_000_000;
 
-        let store = open_store_at(CAPTURE_SECS);
+        let store = open_store_at(CAPTURE_MILLIS);
         let d1 = sample_drawer("hlc-mono-d1", "wing", "room", "alpha");
         let d2 = sample_drawer("hlc-mono-d2", "wing", "room", "beta");
-        store.add_drawer(&d1, CAPTURE_SECS).unwrap();
-        store.add_drawer(&d2, CAPTURE_SECS).unwrap();
+        store.add_drawer(&d1, CAPTURE_MILLIS).unwrap();
+        store.add_drawer(&d2, CAPTURE_MILLIS).unwrap();
 
         let row1 = Uuid::parse_str(&tid("hlc-mono-d1")).unwrap();
         let row2 = Uuid::parse_str(&tid("hlc-mono-d2")).unwrap();
@@ -7084,8 +7372,8 @@ mod tests {
             hlc1, hlc2
         );
         // Both share the same physical ms since wall clock didn't advance.
-        assert_eq!(hlc1.physical_time, CAPTURE_SECS * 1000);
-        assert_eq!(hlc2.physical_time, CAPTURE_SECS * 1000);
+        assert_eq!(hlc1.physical_time, CAPTURE_MILLIS);
+        assert_eq!(hlc2.physical_time, CAPTURE_MILLIS);
         // Logical counter must have bumped.
         assert_eq!(hlc2.logical_count, hlc1.logical_count + 1);
     }

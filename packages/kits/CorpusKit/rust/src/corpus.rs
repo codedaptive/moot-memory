@@ -2433,8 +2433,9 @@ impl Corpus {
     /// Remove a source document from the recall index.
     ///
     /// Removes the source's chunks from BM25 and deletes their vectors
-    /// from VectorStore. BundleStore is append-only so content rows are
-    /// preserved; the source will no longer appear in recall results.
+    /// from VectorStore. Content rows are preserved in the chunks table;
+    /// the source will no longer appear in recall results. To erase
+    /// verbatim chunk content, use `expunge(source_id)` instead.
     pub fn remove(&self, source_id: &str) -> CorpusKitResult<()> {
         let chunks = self.bundle_store.chunks_for_source(source_id, None)?;
         // Vector deletion fans out across every held provider's model_id so no
@@ -2467,7 +2468,7 @@ impl Corpus {
         }
         // Record the source as removed so a subsequent reindex / BM25-rebuild /
         // first-ingest train (incl. the auto-triggered governor reindex) does NOT
-        // re-embed it back into recall from the append-only chunks table.
+        // re-embed it back into recall from the chunks table.
         // `removed_at` is audit-only metadata — mirrors BundleStore's `created_at`
         // SystemTime stamp; not a deterministic computation input.
         let now_secs = std::time::SystemTime::now()
@@ -2478,11 +2479,29 @@ impl Corpus {
         Ok(())
     }
 
+    // ── Hard-delete erasure (secfix/ws2-coredelete) ──
+
+    /// Zero all verbatim chunk text for `source_id` and remove it from recall.
+    ///
+    /// Hard-delete variant of `remove()`. `remove()` suppresses recall but
+    /// leaves chunk text in the chunks table. `expunge()` additionally zeroes
+    /// the `text` column for every chunk of this source via
+    /// `BundleStore::scrub_text()`, ensuring content is unrecoverable.
+    ///
+    /// Call sequence: scrub text first so content is gone even if the
+    /// (secfix/ws2-coredelete: hard-delete destruction contract)
+    pub fn expunge(&self, source_id: &str) -> CorpusKitResult<()> {
+        // Step 1: zero verbatim text in the chunks table.
+        self.bundle_store.scrub_text(source_id)?;
+        // Step 2: remove from recall — invertedIndex, vectorStore, removedSourceStore.
+        self.remove(source_id)
+    }
+
     /// Count the chunks in the bundle store across all ACTIVE sources.
     ///
-    /// BundleStore is append-only, so a removed source's chunks remain stored;
-    /// they are excluded here so the count reflects live recall content. Fast
-    /// path (a plain row count) when nothing is removed.
+    /// A removed source's chunks remain stored; they are excluded here so the
+    /// count reflects live recall content. Fast path (a plain row count) when
+    /// nothing is removed.
     pub fn count(&self) -> CorpusKitResult<usize> {
         let removed = self.removed_source_store.removed_ids()?;
         if removed.is_empty() {

@@ -137,8 +137,8 @@ fn hybrid_recall_merges_vector_and_keyword_hits() {
     // The chunk containing "alpha" should rank first (keyword match
     // plus the closest vector distance both point at chunk 0).
     assert_eq!(results[0].chunk.text, "alpha document");
-    // Each result should expose both subscores when both passes
-    // contribute (for chunk 0 they do).
+    // chunk 0 contributes a vector hit; only vector_score is asserted.
+    // The keyword subscore is not asserted in this test.
     assert!(results[0].vector_score.is_some());
 }
 
@@ -191,4 +191,44 @@ fn hybrid_recall_empty_corpus_returns_empty() {
     )
     .expect("recall");
     assert!(results.is_empty());
+}
+
+// P3-secfix: UUID canonicalization fusion contract.
+//
+// HybridRecall::recall() processes vector hits (item_id: String, may be
+// uppercase from Apple-side exports) and keyword hits (Uuid-typed, always
+// lowercase via Uuid::to_string()). The P3 fix normalizes both through
+// Uuid::parse_str → to_string() so they share the same lowercase-hyphenated
+// key and fuse correctly. We verify the contract against fuse() directly:
+// the same UUID expressed in different cases must produce ONE FusedHit.
+#[test]
+fn uuid_case_mismatch_fuses_to_single_entry() {
+    use corpus_kit::{fuse, LaneTag};
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    let id = Uuid::new_v4();
+    // Rust canonical = lowercase hyphenated (Uuid::to_string()).
+    let lower_id = id.to_string();
+    // Simulate a vector hit with an uppercase UUID string (e.g. from Apple).
+    let upper_id = lower_id.to_ascii_uppercase();
+
+    // Confirm that both parse to the same UUID and re-emit the same canonical
+    // lowercase form — that is what hybrid_recall.rs now does after P3-secfix.
+    let canonical_vec = Uuid::parse_str(&upper_id).unwrap().to_string();
+    let canonical_kw  = Uuid::parse_str(&lower_id).unwrap().to_string();
+    assert_eq!(canonical_vec, canonical_kw,
+        "UUID parse+to_string must yield the same lowercase key regardless of input case");
+
+    // Feed both through fuse() using their canonical keys.
+    // A single item seen in BOTH lanes must produce ONE FusedHit.
+    let mut ranked_lists = HashMap::new();
+    ranked_lists.insert(LaneTag::BinaryDense, vec![(canonical_vec.clone(), 1usize)]);
+    ranked_lists.insert(LaneTag::Sparse, vec![(canonical_kw.clone(), 1usize)]);
+    let weights = [(LaneTag::BinaryDense, 0.6f32), (LaneTag::Sparse, 0.4f32)]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+    let fused = fuse(&ranked_lists, None, &weights, 60.0);
+    assert_eq!(fused.len(), 1,
+        "same UUID in both lanes must fuse to exactly one FusedHit; got {:?}", fused);
 }

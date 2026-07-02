@@ -24,10 +24,10 @@ import Foundation
 /// wires embedding generation in.
 ///
 /// `tombstonedAt` and `removedByBatch` belong to the soft-delete
-/// machinery added in Rev 2.0. They are present on the schema
-/// from Rev 1.0 so the layout never needs to migrate; both are
-/// nil on every drawer written today and
-/// are not read by any query.
+/// machinery. `tombstonedAt` is stamped by `expunge` and is filtered
+/// or enumerated by multiple read paths (`DrawerStore.expungeGated`
+/// and recall tombstone checks). `removedByBatch` is reserved and
+/// remains nil until the batch-removal workflow lands.
 public struct Drawer: Equatable, Hashable, Sendable {
 
     /// Stable identifier supplied by the caller. Defaults to a

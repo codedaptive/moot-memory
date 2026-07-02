@@ -393,8 +393,8 @@ public enum EmbeddingModel: Sendable {
 /// Lifecycle: construct with a PersistenceKit Storage (the actor calls
 /// `storage.open(schema:)` for both BundleStore and VectorStore during
 /// `init`), then call `ingest` to add documents and `recall` to query.
-/// The BundleStore is append-only; `remove(sourceID:)` clears the
-/// recall index (BM25 + vectors) without deleting content rows.
+/// `remove(sourceID:)` clears the recall index (BM25 + vectors) without
+/// deleting content rows. `expunge(sourceID:)` additionally zeroes chunk text.
 ///
 ///
 /// Corpus holds an ORDERED collection of provider slots, one per held
@@ -564,14 +564,13 @@ public actor Corpus {
     /// write and read at refactor instead of rebuilt from scratch (P3 wiring
     /// lands the write/refactor uses; this store is the durable home).
     private let countsStore: CorpusProviderCountsStore
-    /// Records which source IDs have been removed (recall-suppressed). The
-    /// chunks table is append-only, so `remove(sourceID:)` cannot delete chunk
-    /// rows; this store lets every chunk-replay path (reindex, first-ingest
-    /// train, count) EXCLUDE removed sources so they cannot resurface — the
-    /// auto-reindex resurrection fix. (BM25 is no longer rebuilt from chunks on
-    /// open — it loads from the durable InvertedIndexStore and `remove(sourceID:)`
-    /// deletes the removed source's rows from it directly.) Re-ingesting a source
-    /// clears its row (reactivation).
+    /// Records which source IDs have been removed (recall-suppressed). This
+    /// store lets every chunk-replay path (reindex, first-ingest train, count)
+    /// EXCLUDE removed sources so they cannot resurface — the auto-reindex
+    /// resurrection fix. (BM25 is no longer rebuilt from chunks on open — it
+    /// loads from the durable InvertedIndexStore and `remove(sourceID:)` deletes
+    /// the removed source's rows from it directly.) Re-ingesting a source clears
+    /// its row (reactivation).
     private let removedSourceStore: RemovedSourceStore
     /// The ordered per-provider slots, one per held `EmbeddingModel`, in
     /// construction order. `slots[0]` is the DEFAULT signal that the
@@ -777,25 +776,43 @@ public actor Corpus {
         for pair in pairs {
             chunkSourceMap[pair.id] = pair.sourceID
         }
+
+        // WS2-F3: backfill corpus_metadata rows for any existing chunks.
+        // After a v2→v3 schema upgrade the corpus_metadata table is empty even
+        // though chunks exist; globalCorpusMerkleRoot() would return empty until
+        // the next insert triggered rollupCorpusMerkleRoot. This call is idempotent
+        // (upsert on conflict) and is the only correct place to run it: after
+        // migrate(to: BundleStore.schemaDeclaration) creates the table and after
+        // bundleStore is assigned, but before any recall path can observe the roots.
+        try await bundleStore.recomputeAllCorpusMerkleRoots()
     }
 
-    /// Join the ingest drain worker and release the drain lease on actor teardown.
+    /// Cancel the ingest drain worker and release the drain lease on actor teardown.
     ///
     /// Called by the Swift runtime when the last reference to this `Corpus` is
-    /// released. `dropIngestQueue()` cancels the background drain worker Task and
-    /// releases the `DrainLease` — so any in-progress drain loop exits cleanly and
-    /// the next process that opens the same estate can take the lease immediately
-    /// rather than waiting out the TTL (15 s). The `isolated` keyword (SE-0371,
-    /// Swift 6+) permits calling actor-isolated synchronous methods directly from
-    /// deinit without `await`: the runtime guarantees exclusive access at deinit.
+    /// released. Cancelling the worker Task and releasing the `DrainLease` lets any
+    /// in-progress drain loop exit cleanly and lets the next process that opens the
+    /// same estate take the lease immediately rather than waiting out the TTL (15 s).
     ///
-    /// Idempotent: `dropIngestQueue()` is a no-op when the queue was never
-    /// mounted or was already dropped via an explicit teardown call (the normal
-    /// path for orchestrated estates).
+    /// A plain (non-isolated) `deinit` may read the actor's own stored properties
+    /// directly — the runtime guarantees exclusive access at deinit — so the teardown
+    /// touches `ingestDrainWorker`/`drainLease` inline rather than calling the
+    /// actor-isolated `dropIngestQueue()`. The `isolated deinit` form (SE-0371) tripped
+    /// an actor-isolation inference cycle in the cross-module SIL optimizer under
+    /// release whole-module optimization (`error: circular reference` with no source
+    /// location); inlining the field access avoids the cycle while preserving the exact
+    /// teardown effect (cancel worker + release lease). `Task.cancel()` and the
+    /// `DrainLease` struct's `release()` are both non-isolated, so neither needs actor
+    /// hops. The explicit orchestrated-teardown path still calls `dropIngestQueue()`.
+    ///
+    /// Idempotent: both calls are no-ops when the queue was never mounted or was
+    /// already dropped via an explicit teardown call (the normal path for
+    /// orchestrated estates).
     ///
     /// Rust twin: `impl Drop for Corpus { fn drop(&mut self) { self.drop_ingest_queue(); } }`
-    isolated deinit {
-        dropIngestQueue()
+    deinit {
+        ingestDrainWorker?.cancel()
+        drainLease?.release()
     }
 
     /// The default signal's serving provider — `slots[0].provider`.
@@ -946,6 +963,10 @@ public actor Corpus {
         for pair in pairs {
             chunkSourceMap[pair.id] = pair.sourceID
         }
+
+        // WS2-F3: backfill corpus_metadata rows for any existing chunks (same
+        // as production init — idempotent upsert).
+        try await bundleStore.recomputeAllCorpusMerkleRoots()
     }
 
     /// Test-only: force `floatNearest` to return `.storeError(error)` on the next call.
@@ -1374,10 +1395,9 @@ public actor Corpus {
     ///
     /// Every rebuild path — reindex, the BM25 rebuild on open, the first-ingest
     /// basis train — reads this instead of `bundleStore.allChunks()` so a source
-    /// cleared by `remove(sourceID:)` cannot resurface (the chunks table is
-    /// append-only, so removed chunks remain stored for audit but are filtered
-    /// out here). Re-ingesting a source clears its removed-row, so it returns to
-    /// the active set. Not a hot path (rebuild/reindex only).
+    /// cleared by `remove(sourceID:)` cannot resurface. Re-ingesting a source
+    /// clears its removed-row so it returns to the active set. Not a hot path
+    /// (rebuild/reindex only).
     private func activeChunks() async throws -> [Chunk] {
         let removed = try await removedSourceStore.removedIDs()
         let all = try await bundleStore.allChunks()
@@ -1627,9 +1647,10 @@ public actor Corpus {
     /// Remove a source document from the recall index.
     ///
     /// Removes the source's chunks from BM25 and deletes their vectors
-    /// from VectorStore. The BundleStore is append-only, so chunk rows
-    /// are not deleted from content storage; the source will no longer
-    /// appear in recall results after this call.
+    /// from VectorStore. Chunk rows are not deleted from content storage;
+    /// the source will no longer appear in recall results after this call.
+    /// To additionally erase the verbatim chunk text, use
+    /// `expunge(sourceID:)` instead.
     ///
     /// - Parameter sourceID: The source document identifier supplied to
     ///   `ingest`.
@@ -1658,13 +1679,43 @@ public actor Corpus {
         }
         // Record the source as removed so a subsequent reindex / first-ingest
         // train (including the auto-triggered governor reindex) does NOT re-embed
-        // it back into recall from the append-only chunks table. (Keyword recall is
-        // already suppressed above by removing the source's rows from the durable
+        // it back into recall from the chunks table. (Keyword recall is already
+        // suppressed above by removing the source's rows from the durable
         // InvertedIndexStore.)
         // `removed_at` is audit-only metadata (presence is what the active-chunk
         // filter reads), so it uses `Date()` directly — mirroring BundleStore's
         // `created_at` stamp; it is not a deterministic computation input.
         try await removedSourceStore.markRemoved(sourceID, now: Date())
+    }
+
+    // MARK: - Hard-delete erasure (secfix/ws2-coredelete)
+
+    /// Zero all verbatim chunk text for `sourceID` and remove it from recall.
+    ///
+    /// This is the hard-delete variant of `remove(sourceID:)`. `remove` suppresses
+    /// a source from recall (invertedIndex, vectorStore, removedSourceStore) but
+    /// leaves the verbatim chunk text rows in the chunks table — content remains
+    /// in SQLite. `expunge` additionally zeroes the text column of every chunk row
+    /// for this source via `BundleStore.scrubText(sourceID:)`, ensuring the
+    /// verbatim content is unrecoverable even if the structural rows persist.
+    ///
+    /// Call sequence:
+    ///   1. Scrub text first — content is destroyed even if later steps fail.
+    ///   2. Remove from recall — identical to `remove(sourceID:)`.
+    ///
+    /// Called by `GeniusLocusKit` as part of the two-step expunge flow
+    /// (`VerbSurface.expunge`). Callers that only want recall suppression
+    /// (no content erasure) continue to use `remove(sourceID:)`.
+    ///
+    /// (secfix/ws2-coredelete: hard-delete destruction contract)
+    public func expunge(sourceID: String) async throws {
+        // Step 1: zero verbatim text in the chunks table. Content is gone at
+        // the database level before any recall-removal step can fail.
+        try await bundleStore.scrubText(sourceID: sourceID)
+        // Step 2: remove from recall — invertedIndex, vectorStore chunks,
+        // removedSourceStore. Delegates to the existing remove() path so
+        // the two are guaranteed identical recall-suppression behaviour.
+        try await remove(sourceID: sourceID)
     }
 
     // MARK: - Lifecycle (GLK_PROVISION_001)
@@ -1675,12 +1726,11 @@ public actor Corpus {
     /// rows), the chunk-source map, and all vector rows from the VectorStore so
     /// this corpus no longer participates in recall.
     ///
-    /// The BundleStore's `chunks` table is append-only (PersistenceKit schema
-    /// invariant enforced by write triggers). Chunk rows are not deleted by this
-    /// call — they remain in the backing storage for audit and migration purposes.
-    /// What is destroyed is the corpus's active recall capability: after this
-    /// call, `recall` returns empty results and `ingest` would re-index from
-    /// scratch.
+    /// Chunk rows are not deleted by this call — they remain in the backing
+    /// storage. What is destroyed is the corpus's active recall capability:
+    /// after this call, `recall` returns empty results and `ingest` would
+    /// re-index from scratch. To erase verbatim chunk content, call
+    /// `expunge(sourceID:)` before `destroyRecallIndex`.
     ///
     /// Called by `GeniusLocusKit.destroy(storage:corpusStorage:handle:)` as part
     /// of the coordinated estate teardown path. The caller must ensure the estate
@@ -1695,16 +1745,14 @@ public actor Corpus {
         // 2. Delete all vector rows from the VectorStore.
         //    VectorStore.destroyAllVectors() deletes every row in the vectors
         //    table regardless of modelID, so it clears ALL held signals' rows
-        //    in one call (no per-slot fan-out needed). Vectors are not
-        //    append-only so deletion is permitted.
+        //    in one call (no per-slot fan-out needed).
         try await vectorStore.destroyAllVectors()
 
         //    corpus must leave no orphaned basis row FOR ANY held modelID: the
         //    next open would otherwise reconstruct a trained provider whose
         //    basis no longer matches any stored vectors. basisStore.deleteAll()
         //    clears every row regardless of modelID, so all held signals' bases
-        //    are wiped in one call. The basis table is not append-only, so
-        //    deletion is permitted.
+        //    are wiped in one call.
         try await basisStore.deleteAll()
         try await countsStore.deleteAll()
         try await removedSourceStore.deleteAll()
@@ -2195,13 +2243,13 @@ public actor Corpus {
 
     /// Count the total chunks in the bundle store across all sources.
     ///
-    /// Because BundleStore is append-only, this count does not decrease
-    /// when `remove(sourceID:)` is called — removed chunks are still
-    /// stored but no longer appear in recall results.
+    /// This count does not decrease when `remove(sourceID:)` is called —
+    /// removed chunks are still stored but no longer appear in recall results.
+    /// After `expunge(sourceID:)`, rows remain but their text is zeroed.
     public func count() async throws -> Int {
         // Excludes removed (recall-suppressed) sources: a removed source's chunks
-        // remain in the append-only table but must not be counted as live recall
-        // content. Fast path when nothing is removed (a plain row count).
+        // remain stored but must not be counted as live recall content.
+        // Fast path when nothing is removed (a plain row count).
         let removed = try await removedSourceStore.removedIDs()
         if removed.isEmpty { return try await bundleStore.count() }
         let all = try await bundleStore.allChunks()

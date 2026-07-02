@@ -48,17 +48,15 @@ pub enum ManifestKey {
 
     /// The estate's Ed25519 (Curve25519 signing) public key, base64 of
     /// the raw 32-byte representation. Generated on first open and used
-    /// as the estate's federation identity: grants are signed by the
-    /// matching private key so a paired estate can verify provenance.
+    /// as the estate's federation identity once a non-manifest private-key
+    /// storage/wrapping layer is available for signing grants.
     /// Per DECISION_SYNCKIT_DESIGN_2026-05-19 §8.
     Ed25519PublicKey,
 
-    /// The estate's Ed25519 private key, base64 of the raw 32-byte
-    /// representation. At-rest protection note: at the LocusKit layer
-    /// this stores the raw private-key bytes — hardware wrapping
-    /// (Secure Enclave / TPM) is a follow-on; the "Wrapped" name marks
-    /// the seam where that hardware wrapping lands; today the wrap is
-    /// the identity transform.
+    /// Reserved seam for a future hardware/OS-wrapped Ed25519 private
+    /// signing key. The Rust LocusKit manifest must not store raw private
+    /// key bytes here: `manifest.value` is ordinary metadata and is not
+    /// protected by row encryption.
     Ed25519PrivateKeyWrapped,
 }
 
@@ -172,8 +170,8 @@ impl ManifestKey {
 
 // MARK: - ManifestValues
 
-/// A typed, read-only snapshot of the estate manifest. Obtained via the
-/// future `DrawerStore::read_manifest`. Consumed by `Estate::manifest`.
+/// A typed, read-only snapshot of the estate manifest. Obtained via
+/// `DrawerStore::read_manifest`. Consumed by `Estate::manifest`.
 ///
 /// ## Type choices
 ///
@@ -232,9 +230,8 @@ pub struct ManifestValues {
     /// keypair was generated.
     pub ed25519_public_key: Option<String>,
 
-    /// The estate's Ed25519 private key as base64 of the raw 32-byte
-    /// representation. See `ManifestKey::Ed25519PrivateKeyWrapped` for
-    /// the at-rest wrapping note.
+    /// Reserved for a future hardware/OS-wrapped Ed25519 private key.
+    /// Must remain absent unless a real wrapping layer is introduced.
     pub ed25519_private_key_wrapped: Option<String>,
 }
 

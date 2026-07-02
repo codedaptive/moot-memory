@@ -92,9 +92,9 @@ fn run_vector_file(file_name: &str) {
     }
 }
 
-/// Replay one case against a fresh estate. The `ops` and `observations`
-/// arrays must have matching lengths (one observation per op result, but
-/// the schema allows ops that produce no observation — we track a cursor).
+/// Replay one case against a fresh estate. Observations are consumed via
+/// `obs_cursor` in order; after all ops the runner asserts that all
+/// observations were consumed (each op result advances the cursor by one).
 fn run_case(case_id: &str, description: &str, ops: &Value, observations: &Value) {
     // Fresh estate for each case — InMemoryDrawerStore allocates its own
     // InMemoryStorage internally; backend identity is visible at the type.

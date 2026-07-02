@@ -331,16 +331,19 @@ public actor DrawerStore {
     /// transaction's write lock so the audit row's prior_value is
     /// exactly what the flip overwrites. State nibble (bits 0-3) is
     /// cleared and ORed to State.superseded.rawValue; upper axes preserved.
+    /// Supersession cascade as one atomic transaction.
+    ///
+    /// Inserts the successor drawer + its genesis audit event and the
+    /// `supersedes` tunnel in a **single** `storage.transaction(isolation:
+    /// .serializable)` so both writes succeed or both roll back.  If the
+    /// tunnel insert fails no orphaned successor row is left in the database.
+    ///
+    /// The predecessor's state flip (`active → superseded`) is a separate
+    /// operation via `mutateState` and opens its own transaction.  It is NOT
+    /// part of the successor+tunnel transaction because the gate automaton
+    /// (`AuditGate`) must validate the state transition independently, and
+    /// nesting two transactions is not supported in PersistenceKit v1.0.
     private func addDrawerWithCascade(_ d: Drawer, priorID: String) async throws {
-        // Insert the successor and read the predecessor's location, then
-        // file the supersedes tunnel — these are the row writes that
-        // stay direct. The predecessor's state flip is NOT done here:
-        // it is a state transition (active --supersede--> superseded),
-        // so it goes through mutateState below, which validates it and
-        // appends the sealed audit event. The earlier code smuggled the
-        // state through a manual adjective-bitmap write + bitmap_audit
-        // row, bypassing the automaton (F8 anti-pattern, same as the
-        // withdraw bug); the write gate now forbids that.
         // Read the predecessor's location for the tunnel before the
         // write transaction (a plain read; the row exists).
         let priorRows = try await storage.rowStore.query(
@@ -362,11 +365,27 @@ public actor DrawerStore {
             label: "supersedes", kind: .supersedes,
             addedBy: d.addedBy, filedAt: d.filedAt
         )
-        // Emit the successor's gated capture (genesis) event + insert its
-        // projection row, then file the supersedes tunnel.
-        try await gatedCapture(d, now: d.filedAt)
-        _ = try await storage.rowStore.insert(
-            table: "tunnels", values: Self.tunnelValues(tunnel))
+        // Pre-compute the capture body (reads actor-isolated HLC / vocabulary
+        // before the @Sendable closure).  PersistenceKit v1.0 has no nested
+        // transaction support ("No nested transactions. No savepoints in v1.0"
+        // — Transaction.swift), so we cannot call gatedCapture (which opens
+        // its own transaction) inside an outer transaction.  Instead we obtain
+        // the work closure here, then execute it together with the tunnel INSERT
+        // in a single outer serializable transaction.  If the tunnel INSERT
+        // fails, the entire transaction rolls back — no orphaned successor
+        // drawer is left in the database (planned security hardening — B1,
+        // finding #3).
+        let captureBody = try gatedCaptureBody(d, now: d.filedAt)
+        let tunnelValues = Self.tunnelValues(tunnel)
+        try await storage.transaction(isolation: .serializable) { txn in
+            // 1. Insert the successor drawer projection row + genesis audit event.
+            try await captureBody(txn)
+            // 2. File the supersedes tunnel in the same transaction so both
+            //    writes land atomically.  If the tunnel insert throws, the
+            //    transaction rolls back and the successor row is also removed.
+            _ = try await txn.rowStore.insert(
+                table: "tunnels", values: tunnelValues)
+        }
 
         // Validated state flip of the predecessor through the gate.
         try await mutateState(
@@ -677,10 +696,30 @@ public actor DrawerStore {
     ///     filedAt order; fetching the whole estate and discarding the tail
     ///     is O(N_estate), this is O(min(N_estate, limit)).
     ///
+    ///   - `direction` controls the `ORDER BY` direction for both sort keys.
+    ///     Defaults to `.ascending` (oldest-first, preserving existing behaviour
+    ///     for all callers that do not pass this parameter). The recall path
+    ///     passes `.descending` so the bounded 256-row candidate window retains
+    ///     the NEWEST drawers; without this, estates with >256 drawers silently
+    ///     exclude every drawer filed after the 256th-oldest (P4-secfix).
+    ///
+    ///     **Deterministic total order:** the query uses `(filedAt, id)` as a
+    ///     compound sort key, both in `direction`. `id` is the declared TEXT
+    ///     primary key of the drawers table — present in SQLite, PostgreSQL,
+    ///     and InMemory backends — so the order is portable and deterministic.
+    ///     Rows with the same `filedAt` are broken by `id`, so the DESC result
+    ///     is the exact byte-for-byte reverse of the ASC result for any fixed
+    ///     dataset. This matches the Rust port's `(filed_at, id)` ordering
+    ///     (c-recall-portable fix; replaces SQLite-only rowid tie-break).
+    ///
     /// Telemetry: emits `locuskit.drawer.query_latency_ms` and
     /// `locuskit.drawer.query_result_count` (tag: query="all") when
     /// monitoring is enabled.
-    public func allDrawers(hydrationLevel: HydrationLevel, limit: Int?) async throws -> [Drawer] {
+    public func allDrawers(
+        hydrationLevel: HydrationLevel,
+        limit: Int?,
+        direction: OrderDirection = .ascending
+    ) async throws -> [Drawer] {
         let startTs = Date().timeIntervalSince1970
         // No-blob projection for the structured/bitmap tiers; full read for `.full`.
         // Mirrors the same column set used by `getDrawers(ids:hydrationLevel:)`.
@@ -695,13 +734,24 @@ public actor DrawerStore {
         // a poison filedAt like "+58432-..." from a Vault import where a
         // millisecond epoch was stored where seconds were expected) are skipped
         // at the storage cursor level and do not abort the entire corpus scan.
+        //
+        // Compound sort key: (filedAt, id) in `direction`. The id secondary
+        // term breaks ties within the same filedAt so the result is a
+        // deterministic total order — DESC is exactly reverse(ASC). `id` is
+        // the declared TEXT primary key of the drawers table, present in all
+        // three backends (SQLite, PostgreSQL, InMemory). This replaces the
+        // previous SQLite-only `rowid` pseudo-column, which is undefined in
+        // PostgreSQL and caused an undefined-column error on Postgres estates
         let (rows, _) = try await storage.rowStore.querySkipCorrupt(
             table: "drawers",
             where: nil,
-            orderBy: [OrderClause(column: Column(table: "drawers", name: "filedAt"), direction: .ascending)],
+            orderBy: [
+                OrderClause(column: Column(table: "drawers", name: "filedAt"), direction: direction),
+                OrderClause(column: Column(table: "drawers", name: "id"), direction: direction),
+            ],
             limit: limit.map { $0 }, offset: nil, columns: columns
         )
-        let result = try decodeDrawerRowsResilient(rows, scan: "allDrawers(hydrationLevel:limit:)")
+        let result = try decodeDrawerRowsResilient(rows, scan: "allDrawers(hydrationLevel:limit:direction:)")
         // query="all" labels this as the full-corpus path.
         // This is the most expensive drawer read and the one most worth
         // monitoring for latency regression in large estates.
@@ -790,8 +840,28 @@ public actor DrawerStore {
     /// capture may set — is decomposed from the drawer's bitmaps into a
     /// FieldWrite. This makes the audit log self-sufficient from birth
     /// (cold-rebuild and federation both need the creation event).
-    private func gatedCapture(_ d: Drawer, now: Date) async throws {
+    /// Build the `@Sendable` closure that performs the row INSERT and audit-gate
+    /// work for a drawer capture, reading all actor-isolated state (HLC stamp,
+    /// vocabulary, estate UUID) eagerly before the closure is constructed so
+    /// the result is safe to call inside a `storage.transaction` block.
+    ///
+    /// This separation exists because `PersistenceKit` v1.0 does not support
+    /// nested transactions (see `Transaction.swift`: "No nested transactions.
+    /// No savepoints in v1.0"). Callers that need a drawer INSERT to share a
+    /// transaction with another storage write (e.g. `addDrawerWithCascade`
+    /// bundling the successor INSERT and the supersedes tunnel INSERT into one
+    /// atomic commit) call this method to obtain the work body, then execute
+    /// it inside a single outer `storage.transaction(isolation: .serializable)`.
+    ///
+    /// `gatedCapture` is the single-drawer path (no cascade); it simply wraps
+    /// the result of this method in its own transaction.
+    private func gatedCaptureBody(
+        _ d: Drawer, now: Date
+    ) throws -> @Sendable (any StorageTransaction) async throws -> Void {
         let rowUuid = try Self.requireUuid(d.id, label: "id")
+        // All actor-isolated reads happen here, before the @Sendable closure
+        // is formed.  HLC.send() both reads and mutates the actor-isolated
+        // hybrid logical clock, so it must be called outside the closure.
         let estate = estateUuid
         let vocab = vocabulary
         let nowMillis = Int64(now.timeIntervalSince1970 * 1000)
@@ -810,14 +880,18 @@ public actor DrawerStore {
             writes(for: .adjective, from: d.adjectiveBitmap) +
             writes(for: .operational, from: d.operationalBitmap) +
             writes(for: .provenance, from: d.provenance)
-        let anchor = SubstrateTypes.LatticeAnchor.udc(d.udcCode)
-
+        // Carry the drawer's varied Q-ID into the sealed anchor (not just the
+        // often-uniform UDC class) so the matrix O/T lanes get per-content signal.
+        let anchor = SubstrateTypes.LatticeAnchor.udcQid(d.udcCode, qid: d.wikidataQID ?? "")
         let nowTs = now.timeIntervalSince1970
         let estateTag = estate.uuidString
-        try await storage.transaction(isolation: .serializable) { txn in
+
+        // The returned closure captures only Sendable values.  `Drawer` is
+        // Sendable; all computed values above (UUID, Vocabulary, [FieldWrite],
+        // LatticeAnchor, HLCTimestamp, Double, String) are Sendable.
+        return { txn in
             _ = try await txn.rowStore.insert(
                 table: "drawers", values: Self.drawerValues(d))
-
             let result = AuditGate.admit(
                 estateUuid: estate, rowId: rowUuid, nounType: .drawer, verb: .capture,
                 prior: nil, priorLatticeAnchor: nil, writes: allWrites,
@@ -831,6 +905,13 @@ public actor DrawerStore {
                 throw LocusKitError.invalidContent("capture rejected by gate: \(v)")
             }
         }
+    }
+
+    /// File a new drawer through the write gate inside a single serializable
+    /// transaction.  For the non-cascade path (no active predecessor).
+    private func gatedCapture(_ d: Drawer, now: Date) async throws {
+        let body = try gatedCaptureBody(d, now: now)
+        try await storage.transaction(isolation: .serializable, body)
     }
 
     /// Insert a batch of pre-validated fresh drawers in a single transaction.
@@ -876,7 +957,9 @@ public actor DrawerStore {
                     writes(for: .adjective, from: d.adjectiveBitmap) +
                     writes(for: .operational, from: d.operationalBitmap) +
                     writes(for: .provenance, from: d.provenance)
-                let anchor = SubstrateTypes.LatticeAnchor.udc(d.udcCode)
+                // Carry the drawer's varied Q-ID into the sealed anchor (not just the
+        // often-uniform UDC class) so the matrix O/T lanes get per-content signal.
+        let anchor = SubstrateTypes.LatticeAnchor.udcQid(d.udcCode, qid: d.wikidataQID ?? "")
 
                 let result = AuditGate.admit(
                     estateUuid: estateID, rowId: rowUuid, nounType: .drawer, verb: .capture,
@@ -1191,6 +1274,7 @@ public actor DrawerStore {
                         actor: changedBy
                     )
                     if case .success(let sibEvent) = sibResult {
+                        // Gate accepted: update state bitmap, zero content, stamp.
                         let sibEventWithReason = sibEvent.withReason(
                             "lineage expunge cascade from \(drawerId)")
                         _ = try await txn.rowStore.update(
@@ -1205,10 +1289,19 @@ public actor DrawerStore {
                         if sealAudit {
                             try await txn.auditLog.append(sibEventWithReason)
                         }
+                    } else {
+                        // Gate rejected the state transition (e.g., accepted →
+                        // tombstoned is S-3 forbidden). Content scrub is unconditional
+                        // and independent of the state machine: even when the state
+                        // cannot transition, the verbatim content MUST be zeroed.
+                        // Leaving content intact when the gate fails is a destruction-
+                        // contract violation (secfix/ws2-coredelete).
+                        _ = try await txn.rowStore.update(
+                            table: "drawers",
+                            values: ["content": .text("")],
+                            where: .eq(Column(table: "drawers", name: "id"), .text(siblingId))
+                        )
                     }
-                    // If the gate rejects a sibling (e.g. accepted → tombstoned
-                    // is S-3 forbidden), skip it silently — the head was already
-                    // expunged. Accepted rows survive per spec.
                 }
 
                 // Record sibling in the erasure ledger. duplicateKey is
@@ -2608,9 +2701,10 @@ public actor DrawerStore {
 
     /// Mark a trace row's `used` flag (bit 0 of operationalBitmap).
     /// The reward path calls this when it has processed the row.
-    /// Uses `storage.transaction` for atomic read-modify-write: reads
-    /// the current bitmap, ORs bit 0 in, then writes it back. A no-op
-    /// if the row is already marked used.
+    /// Performs a sequential read-modify-write: fetches the current row,
+    /// ORs bit 0 into the operationalBitmap, then writes it back. There
+    /// is no wrapping transaction — the fetch and update are separate
+    /// storage calls. A no-op if the row is already marked used.
     ///
     /// - Parameters:
     ///   - id: the RecallTraceItem id to mark

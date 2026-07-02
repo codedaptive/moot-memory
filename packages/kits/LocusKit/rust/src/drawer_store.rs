@@ -176,8 +176,8 @@ pub trait DrawerStore: Send + Sync {
     /// Insert a drawer. When the drawer's `lineage_id` matches an
     /// active predecessor, the insert runs as a supersession cascade
     /// per spec § 6.2 / § 6.3: capture the new drawer through the
-    /// gate (a genesis `AuditEvent`), flip the predecessor's state
-    /// nibble to `Superseded` via
+    /// gate (a genesis `AuditEvent`), flip the predecessor's 6-bit
+    /// state field to `Superseded` via
     /// `mutate_state(State::Superseded, RowVerb::Supersede)` (which
     /// appends one sealed `AuditEvent`), and file a directional
     /// `supersedes` tunnel. Otherwise a plain gated capture.
@@ -362,6 +362,63 @@ pub trait DrawerStore: Send + Sync {
         Ok(rows)
     }
 
+    // -----------------------------------------------------------------
+    // P4-secfix: DESC-ordered bounded scan variants.
+    //
+    // The recall non-pruning path uses a bounded scan with RECALL_CANDIDATE_CAP
+    // (256) rows. When ordered ASC, an estate with >256 drawers permanently
+    // excludes the newest content from recall — the 256 oldest drawers fill the
+    // candidate window and everything filed after drawer #256 is unreachable.
+    // These DESC variants ensure the cap retains the NEWEST candidates.
+    //
+    // Default impls derive from the ASC counterparts (correct for all backends).
+    // SQLite, Postgres, and InMemory override with efficient ORDER BY filed_at
+    // DESC SQL so the DESC scan does O(cap) I/O, not O(estate)+reverse.
+    // The Arc blanket forwards both methods so Arc<dyn DrawerStore> estates
+    // (GLK's composited estate) work correctly.
+    // -----------------------------------------------------------------
+
+    /// Bounded full-corpus scan ordered by `filed_at` DESCENDING (newest first).
+    ///
+    /// P4-secfix: recall non-pruning path; ensures the bounded candidate window
+    /// `DrawerStore.allDrawers(hydrationLevel:limit:direction: .descending)`.
+    ///
+    /// Default derives from [`all_drawers_bounded`](Self::all_drawers_bounded)
+    /// by loading the full ASC result and reversing; backends override with a
+    /// true DESC SQL query for O(cap) I/O.
+    fn all_drawers_bounded_desc(&self, limit: Option<usize>) -> Result<Vec<Drawer>, LocusKitError> {
+        // Load the full (unbounded) set and reverse to get DESC order.
+        // `all_drawers()` uses (filed_at ASC, id ASC) compound ordering
+        // (c-recall-portable fix; id is the declared TEXT primary key,
+        // portable to PostgreSQL where rowid is undefined), so `.reverse()`
+        // yields exactly (filed_at DESC, id DESC) — a deterministic total
+        // order that is the byte-for-byte reverse of the ASC result for any
+        // fixed dataset. This is correct but O(estate) — backends
+        // (DrawerStoreCore) override with an efficient SQL ORDER BY DESC,
+        // LIMIT query for O(cap) I/O.
+        let mut all = self.all_drawers()?;
+        all.reverse();
+        Ok(match limit {
+            Some(n) => all.into_iter().take(n).collect(),
+            None => all,
+        })
+    }
+
+    /// Bounded no-blob full-corpus scan ordered by `filed_at` DESCENDING.
+    ///
+    /// P4-secfix projected variant: same as [`all_drawers_bounded_desc`] but
+    /// from `all_drawers_bounded_desc`; backends override for efficiency.
+    fn all_drawers_bounded_projected_desc(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<Drawer>, LocusKitError> {
+        let mut rows = self.all_drawers_bounded_desc(limit)?;
+        for d in &mut rows {
+            d.content = String::new();
+        }
+        Ok(rows)
+    }
+
     /// Batch-insert a slice of recall-trace rows in a single operation.
     ///
     /// Replaces the per-drawer `insert_recall_trace` loop that wrote one
@@ -448,7 +505,7 @@ pub trait DrawerStore: Send + Sync {
         ))
     }
 
-    /// Mutate a drawer's state (bits 0–3 of adjective_bitmap),
+    /// Mutate a drawer's state (bits 0–5 of adjective_bitmap),
     /// validating the transition against the spec § 6.2 legal-graph
     /// before any write. Illegal transitions return
     /// `LocusKitError::DisciplineViolation` and leave the row and
@@ -781,9 +838,10 @@ pub trait DrawerStore: Send + Sync {
         ))
     }
 
-    /// All facts from a source drawer whose state cluster is below 7
-    /// (excludes the rejected/accepted/tombstoned post-resolution
-    /// states), ordered by `filed_at` ascending.
+    /// All facts from a source drawer whose state cluster is below
+    /// `RowState::ACTIVE_CLUSTER_UPPER_BOUND_RAW` (raw 16; excludes
+    /// Cluster-B retired states and Cluster-C terminal states),
+    /// ordered by `filed_at` ascending.
     ///
     /// ## Default impl — fail-loud, never silently empty
     ///
@@ -1211,6 +1269,29 @@ pub trait DrawerStore: Send + Sync {
         ))
     }
 
+    /// Zero the `content` column for every row in the `drawers` table.
+    ///
+    /// Called by `GLKCoordinator::destroy` to erase all drawer content blobs
+    /// from LocusKit's SQLite storage as part of the estate destruction
+    /// sequence (destruction contract, secfix/ws2-coredelete §Cluster E).
+    /// Must be called BEFORE `close()` so the storage connection is still
+    /// open when the bulk UPDATE runs.
+    ///
+    /// Does NOT delete the manifest, audit events, or other metadata tables —
+    /// those remain as a forensic record. The SQLite file itself is removed by
+    /// the application layer (moot-mgr) after the GLK destroy call returns.
+    ///
+    /// ## Default impl — fail-loud
+    ///
+    /// Backends that do not override this return `DatabaseUnavailable` rather
+    /// than silently skipping the wipe. A silent no-op would leave content
+    /// blobs in place, violating the destruction contract.
+    fn wipe_all_content(&self) -> Result<(), LocusKitError> {
+        Err(LocusKitError::DatabaseUnavailable(
+            "wipe_all_content not implemented for this DrawerStore impl".to_string(),
+        ))
+    }
+
     /// Append an `"expungeOrphan"` audit event synthesized from the drawer's
     /// current on-disk state. Used by `run_expunge_integrity_sweep` when the
     /// original step-1 gate event is unavailable (crash-window recovery).
@@ -1316,8 +1397,9 @@ pub trait DrawerStore: Send + Sync {
         ))
     }
 
-    /// All kg-facts estate-wide where the state cluster is below 7
-    /// (excludes rejected/accepted/tombstoned post-resolution states),
+    /// All kg-facts estate-wide whose state cluster is below
+    /// `RowState::ACTIVE_CLUSTER_UPPER_BOUND_RAW` (raw 16; excludes
+    /// Cluster-B retired states and Cluster-C terminal states),
     /// ordered by `filed_at` ascending. Mirrors `kg_facts_for_drawer`
     /// but without the source-drawer predicate.
     ///
@@ -1607,6 +1689,15 @@ impl DrawerStore for std::sync::Arc<dyn DrawerStore> {
         limit: Option<usize>,
     ) -> Result<Vec<Drawer>, LocusKitError> {
         self.as_ref().all_drawers_bounded_projected(limit)
+    }
+    fn all_drawers_bounded_desc(&self, limit: Option<usize>) -> Result<Vec<Drawer>, LocusKitError> {
+        self.as_ref().all_drawers_bounded_desc(limit)
+    }
+    fn all_drawers_bounded_projected_desc(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<Drawer>, LocusKitError> {
+        self.as_ref().all_drawers_bounded_projected_desc(limit)
     }
     fn drawer_ids(&self) -> Result<Vec<RowID>, LocusKitError> {
         self.as_ref().drawer_ids()
@@ -1925,5 +2016,41 @@ impl DrawerStore for std::sync::Arc<dyn DrawerStore> {
     ) -> Result<Option<crate::container_fingerprint_store::ContainerFingerprint>, LocusKitError>
     {
         self.as_ref().get_container_fingerprint(wing, room)
+    }
+    // P5-secfix: six methods whose trait defaults return a hard error were missing
+    // from the Arc<dyn DrawerStore> blanket impl, so callers using the Arc surface
+    // always got DatabaseUnavailable instead of delegating to the concrete backend.
+    fn living_successor_in_lineage(
+        &self,
+        lineage_id: &str,
+        excluding_id: &str,
+    ) -> Result<Option<String>, LocusKitError> {
+        self.as_ref().living_successor_in_lineage(lineage_id, excluding_id)
+    }
+    fn outline_children(&self, parent_drawer_id: &str) -> Result<Vec<Tunnel>, LocusKitError> {
+        self.as_ref().outline_children(parent_drawer_id)
+    }
+    fn outline_ancestors(&self, drawer_id: &str) -> Result<Vec<String>, LocusKitError> {
+        self.as_ref().outline_ancestors(drawer_id)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn reparent_drawer(
+        &self,
+        child_id: &str,
+        new_parent_id: Option<&str>,
+        order_key: f64,
+        wing: &str,
+        room: &str,
+        added_by: &str,
+        now: i64,
+    ) -> Result<(), LocusKitError> {
+        self.as_ref()
+            .reparent_drawer(child_id, new_parent_id, order_key, wing, room, added_by, now)
+    }
+    fn count_drawer_rows(&self) -> Result<usize, LocusKitError> {
+        self.as_ref().count_drawer_rows()
+    }
+    fn wipe_all_content(&self) -> Result<(), LocusKitError> {
+        self.as_ref().wipe_all_content()
     }
 }

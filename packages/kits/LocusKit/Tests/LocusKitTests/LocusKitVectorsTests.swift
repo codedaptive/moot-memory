@@ -15,7 +15,8 @@ import Testing
 /// id lists, state-active booleans, recall counts).
 ///
 /// The JSON locations are resolved by walking up from `#filePath`
-/// until a directory containing `docs/engineering/.../vectors/locuskit/`
+/// until a directory containing
+/// `docs/validation/substrate_math_performance/test-harness/vectors/locuskit/`
 /// is found. This keeps the runner reusable from any worktree
 /// without an environment variable.
 @Suite("LocusKit vectors — parity runner over locuskit_* vectors")

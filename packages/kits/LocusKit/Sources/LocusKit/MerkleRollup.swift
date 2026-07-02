@@ -2,7 +2,9 @@
 //
 // Merkle content-integrity rollup: room → wing → estate (NT-L3).
 //
-// After a drawer write, the rollup recomputes the affected subtree:
+// The rollup is called explicitly — not automatically after each drawer
+// write. Current capture paths defer it. When invoked, it recomputes
+// the affected subtree bottom-up:
 //   1. Room root: MerkleHash.interior over the room's active drawers.
 //   2. Wing root: MerkleHash.interior over the wing's room roots.
 //   3. Estate root: MerkleHash.interior over the wing roots.
@@ -108,18 +110,31 @@ extension Estate {
 
     // MARK: - Room-level root
 
-    /// Compute the Merkle root for a room by hashing its active drawers.
+    /// Compute the Merkle root for a room by hashing its live drawers.
     ///
     /// Queries raw rows to read the `content_hash` column directly. For
     /// rows without a stored hash (pre-existing data), computes a leaf
     /// hash on-demand from the drawer's content.
+    ///
+    /// Excludes both tombstoned and withdrawn drawers from the snapshot.
+    /// Tombstoned drawers have `tombstonedAt IS NOT NULL`. Withdrawn drawers
+    /// have `tombstonedAt IS NULL` but carry state raw value 18 in bits 0-5
+    /// of `adjectiveBitmap` (mask 0x3F). Including withdrawn drawers in the
+    /// snapshot would allow retrieval of content that the user retracted,
+    /// violating snapshot completeness (WS2-F1, fixed 2026-06-28).
     func computeRoomMerkleRoot(roomNodeId: UUID) async throws -> MerkleRoot {
         let rows = try await store.storage.rowStore.query(
             table: "drawers",
             where: .and([
                 .eq(Column(table: "drawers", name: "parent_node_id"),
                     .text(roomNodeId.uuidString)),
+                // Exclude tombstoned drawers (irreversible deletion).
                 .isNull(Column(table: "drawers", name: "tombstonedAt")),
+                // Exclude withdrawn drawers (state 18, bits 0-5 of adjectiveBitmap).
+                // Withdrawn means the user retracted the drawer; it must not
+                // appear in the live snapshot that commits hash to.
+                .not(.bitwiseEq(Column(table: "drawers", name: "adjectiveBitmap"),
+                                expected: 18, mask: 0x3F)),
             ]),
             orderBy: [],
             limit: nil,

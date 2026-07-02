@@ -227,6 +227,12 @@ public final class PpmiProvider: EmbeddingProvider, @unchecked Sendable {
         for (i, target) in terms.enumerated() {
             let lo = max(0, i - window)
             let hi = min(terms.count - 1, i + window)
+            // Guard: a negative `window` makes lo > hi (e.g. window = -5,
+            // i = 3 → lo = 8, hi = -2). The closed range lo...hi traps when
+            // lo > hi. Skip the context loop entirely — a negative window
+            // means "no context", producing no co-occurrence counts but not
+            // crashing. Mirrors the identical guard in RandomIndexingProvider.
+            if hi < lo { continue }
             for j in lo...hi where j != i {
                 let context = terms[j]
                 // Increment co-occurrence count.
@@ -380,12 +386,14 @@ public final class PpmiProvider: EmbeddingProvider, @unchecked Sendable {
     /// a caller that needs both would otherwise run `ppmiContextVector(for:)`
     /// twice. This override computes it ONCE and returns both outputs.
     ///
-    /// Byte-identical to calling `embed` then `embedFloat` separately:
-    /// the engram is `FloatSimHash.project` of the vector (or `.zero` when the
-    /// vector is empty), and `floats` reproduces `embedFloat`'s result with its
-    /// vocab-miss throw collapsed to `[]` (the `embedPair` opt-out contract).
-    /// An untrained basis (empty `ppmiVectors`) yields an empty vector, so the
-    /// engram is `.zero` and floats are `[]` — identical to the separate calls.
+    /// Single-pass equivalent for the common case: the engram is
+    /// `FloatSimHash.project` of the vector (or `.zero` when the
+    /// vector is empty), and `floats` reproduces `embedFloat`'s result
+    /// with its vocab-miss throw collapsed to `[]`. Note: for trained
+    /// providers with a non-empty all-OOV query, `embedFloat` throws
+    /// `embedFloatVocabMiss` but this override returns `(.zero, [])`;
+    /// outputs match for all other inputs. An untrained basis (empty
+    /// `ppmiVectors`) yields an empty vector: engram `.zero`, floats `[]`.
     public func embedPair(_ text: String) async throws -> (engram: Engram, floats: [Float]) {
         let v = await ppmiContextVector(for: text)
         guard !v.isEmpty else { return (.zero, []) }

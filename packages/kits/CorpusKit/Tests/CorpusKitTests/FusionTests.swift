@@ -256,8 +256,9 @@ struct FusionTests {
     //   item-B: vector rank 2, keyword rank 1 → fused = 0.6/62 + 0.4/61
     //   item-C: vector rank 3 only            → fused = 0.6/63
     //
-    // Expected order: item-A (≈0.0162) > item-B (≈0.0162) with tie broken
-    // by itemID ASC when scores are equal, > item-C (≈0.0095).
+    // Expected order: item-A > item-B > item-C (≈0.0095). item-A and item-B
+    // appear equal at two decimal places but A wins by a small numeric margin
+    // (see the derivation at lines 309-313).
 
     @Test func hybridRecallTwoLaneFormulaConformance() {
         // Compute expected scores directly from the RRF formula.

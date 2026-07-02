@@ -91,7 +91,9 @@ public enum LocusKitSchema {
 
     /// The complete LocusKit schema as a PersistenceKit declaration.
     /// `Storage.open(schema:)` creates every table, generated column,
-    /// append-only trigger, and index from this single value.
+    /// and index from this single value. No trigger declarations are
+    /// present; trigger-like behaviour (e.g. audit log rows) is
+    /// implemented in Swift at the verb layer.
     public static var schema: SchemaDeclaration {
         SchemaDeclaration(
             kitID: kitID,
@@ -121,10 +123,10 @@ public enum LocusKitSchema {
 
     // MARK: - drawers
 
-    /// The drawer table. Primary key `id` is TEXT, not UUID: LocusKit
-    /// drawer ids are arbitrary content strings ("d1",
-    /// "supersedes:<a>:<b>"), never UUIDs, so the key is a plain text
-    /// column and the store does not rely on UUID key resolution.
+    /// The drawer table. Primary key `id` is TEXT storing a UUID string.
+    /// Current gated write paths (`DrawerStore.requireUuid`) validate that
+    /// ids are well-formed UUIDs before any insert; `Drawer`'s initializer
+    /// defaults `id` to `UUID().uuidString`.
     ///
     /// Generated columns expose the indexed bit-range field extracts
     /// the retrieval layer dispatches on. They are derived from the
@@ -615,8 +617,8 @@ public enum LocusKitSchema {
     /// (depth 0), wing (depth 1), room (depth 2). Drawers reference
     /// their parent room via `parent_node_id` on the drawers table
     /// (NT-L2). The `merkle_root` column stores a 32-byte BLOB
-    /// populated by the Merkle rollup on every capture, expunge,
-    /// and withdraw.
+    /// populated by `MerkleRollup`; current capture paths defer the
+    /// rollup rather than computing it inline on every write.
     ///
     /// HLC columns (`created_hlc`, `tombstoned_hlc`) are tagged with
     /// ColumnRole so PersistenceKit's as-of filter operates over nodes

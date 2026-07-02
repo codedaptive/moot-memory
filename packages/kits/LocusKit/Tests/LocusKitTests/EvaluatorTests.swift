@@ -64,8 +64,8 @@ struct EvaluatorTests {
 
     /// Capture a drawer and flip its confirmation to `.userConfirmed`
     /// for tests that explicitly exercise the confirmation axis.
-    /// Provenance bit layout: confirmation bits 4–6,
-    /// Cookbook §2.5: `.userConfirmed.rawValue = 1` at bits 18–23, so `1 << 18 = 0x40000`.
+    /// Cookbook §2.5: `.userConfirmed.rawValue = 1` at provenance
+    /// confirmation bits 18–23, so `1 << 18 = 0x40000`.
     private func captureAndConfirm(
         _ f: CaptureFrame, into estate: Estate
     ) async throws -> Drawer {

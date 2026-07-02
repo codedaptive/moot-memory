@@ -119,7 +119,7 @@ struct PpmiBasisSerializationTests {
     func countsRoundTripReDerives() async throws {
         let original = PpmiProvider()
         for doc in ppmiBasisCorpus { original.train(terms: doc, window: ppmiWindow) }
-        // Serialize counts BEFORE finalize (finalize clears the count tables).
+        // Serialize counts before finalize. finalize() rebuilds ppmiVectors but does not clear the raw count tables.
         let countsBlob = original.serializeCounts()
         original.finalize()
         let restored = try PpmiProvider(deserializingCounts: countsBlob)

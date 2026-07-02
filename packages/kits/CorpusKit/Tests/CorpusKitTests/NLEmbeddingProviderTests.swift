@@ -329,7 +329,9 @@ struct EmbeddingModelNLCasesTests {
 
     @Test("nlEmbedding is not the default ensemble — default remains .deterministic")
     func defaultRemainsUnchanged() {
-        // default ensemble. Verify EmbeddingModel.default is still .deterministic.
+        // NL cases are opt-in. Verify the single-model fallback
+        // EmbeddingModel.default is still .deterministic (not the
+        // production CorpusEnsemble.defaultEnsemble() multi-signal ensemble).
         if case .deterministic = EmbeddingModel.default {
             // Correct.
         } else {

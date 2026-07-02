@@ -470,11 +470,12 @@ fn reingest_batch_does_not_inflate_counts() {
 }
 
 // T4 (ADR-021 Decision 7): a file-backed (SQLite) estate persists the Corpus
-// ingest queue to the shared encrypted `queue.sqlite` BESIDE the estate — not
-// a plaintext maildir. Proven by:
-//   1. `queue.sqlite` appears as a regular FILE beside the estate db.
+// ingest queue to a per-estate SQLite file BESIDE the estate — not a plaintext
+// maildir. The sibling filename is `<estate-stem>.queue.sqlite` so two estates
+// in the same directory never share a queue (cross-estate isolation). Proven by:
+//   1. `<estate-stem>.queue.sqlite` appears as a regular FILE beside the estate db.
 //   2. No `corpus_ingest_queue/` maildir is created (old FilesystemBackend path is gone).
-//   3. The enqueued document is searchable via the shared queue path.
+//   3. The enqueued document is searchable via the per-estate queue path.
 #[test]
 fn ingest_queue_is_durable_for_sqlite_estate() {
     let path = scratch_path();
@@ -487,13 +488,23 @@ fn ingest_queue_is_durable_for_sqlite_estate() {
         .expect("enqueue_ingest");
     corpus.await_ingest_drain().expect("await_ingest_drain");
 
-    // T4: the shared queue.sqlite must exist as a regular FILE beside the estate.
-    let mut queue_sibling = std::path::PathBuf::from(&path);
-    queue_sibling.pop();
-    queue_sibling.push("queue.sqlite");
+    // T4: derive the per-estate sibling path the same way EstateConfiguration does:
+    // <dir>/<estate-stem>.queue.sqlite — guarantees cross-estate isolation.
+    let estate_path = std::path::Path::new(&path);
+    let stem = estate_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let sibling_filename = format!("{}.queue.sqlite", stem);
+    let queue_sibling = estate_path
+        .parent()
+        .map(|p| p.join(&sibling_filename))
+        .unwrap_or_else(|| std::path::PathBuf::from(&sibling_filename));
+
     assert!(
         queue_sibling.is_file(),
-        "queue.sqlite must exist as a regular file beside the estate db (T4)"
+        "{} must exist as a regular file beside the estate db (T4 per-estate isolation)",
+        sibling_filename
     );
 
     // T4: the old plaintext maildir must NOT exist.
@@ -505,7 +516,7 @@ fn ingest_queue_is_durable_for_sqlite_estate() {
         "corpus_ingest_queue/ maildir must NOT exist (old FilesystemBackend path is gone in T4)"
     );
 
-    // The enqueued document is searchable via the shared queue path.
+    // The enqueued document is searchable via the per-estate queue path.
     let results = corpus.recall("durable queue", 5, NOW_MILLIS).expect("recall");
     assert!(!results.is_empty());
 

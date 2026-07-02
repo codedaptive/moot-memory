@@ -251,8 +251,8 @@ struct MerkleRollupTests {
 
     // MARK: - Withdraw rollup is idempotent
 
-    @Test("withdraw triggers rollup but root unchanged (drawer still active)")
-    func withdrawRollupIdempotent() async throws {
+    @Test("withdraw triggers rollup and root changes (withdrawn drawer excluded from snapshot)")
+    func withdrawRollupChangesRoot() async throws {
         let (estate, _) = try await makeEstate()
         let d1 = try await estate.capture(
             captureFrame(content: "will withdraw"))
@@ -268,10 +268,12 @@ struct MerkleRollupTests {
         let rootAfter = try await estate.nodeStore
             .getNode(id: roomNodeId)?.merkleRoot
 
-        // Withdrawn drawers are not tombstoned, so the active-drawer
-        // set is unchanged and the room root stays the same.
+        // WS2-F1: withdrawn drawers are excluded from the live snapshot.
+        // computeRoomMerkleRoot now filters NOT(adjectiveBitmap & 0x3F == 18),
+        // so after withdraw the room root changes (drawer removed from set).
         #expect(rootBefore != nil)
-        #expect(rootBefore == rootAfter)
+        #expect(rootBefore != rootAfter,
+                "WS2-F1: withdraw must remove the drawer from the Merkle snapshot")
     }
 
     // MARK: - Part 5: Direct rollup (bypassing capture verb)
@@ -395,10 +397,6 @@ struct MerkleRollupTests {
     /// Verify that `captureBatch` does NOT update Merkle roots during the
     /// batch pass — roots stay nil until a subsequent `rollupAllMerkleRoots`
     /// call. This is the key invariant: O(1) rollup cost per batch, not O(N).
-    ///
-    /// The stub (Part 1) calls per-drawer `capture` which fires rollup, so
-    /// the room root will be non-nil here — this test FAILS in Part 1 and
-    /// PASSES once the real no-rollup path lands in Part 2.
     @Test("captureBatch defers Merkle rollup — room root is nil until reindex")
     func batchCaptureDefersMerkleRootUntilReindex() async throws {
         let (estate, _) = try await makeEstate()
@@ -412,7 +410,6 @@ struct MerkleRollupTests {
         let roomNodeId = UUID(uuidString: drawers[0].parentNodeId)!
         let roomNode = try await estate.nodeStore.getNode(id: roomNodeId)
         // After batch only (no explicit rollup), room root must still be nil.
-        // The stub fires rollup per frame so this will be non-nil → FAILS (expected).
         #expect(roomNode?.merkleRoot == nil)
     }
 

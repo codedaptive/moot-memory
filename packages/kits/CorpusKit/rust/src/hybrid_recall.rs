@@ -10,9 +10,10 @@
 //! CORPUSKIT_REPORT_001 (cp-corpuskit-report): added IntellectusLib
 //! self-report telemetry to `recall`. The `report!` macro calls are
 //! placed at the operation boundary, after the result is assembled,
-//! so mathematical behaviour is unchanged. When monitoring is
-//! disabled (the default), the macro expands to a single
-//! `AtomicBool::load + branch` — zero allocation, no clock.
+//! so mathematical behaviour is unchanged. `recall` unconditionally
+//! reads SystemTime::now() for start_ts and end_ts, and builds
+//! model_tag before the `report!` calls; the disabled-monitoring
+//! path does not short-circuit these steps.
 //!
 //! The keyword lane uses `InvertedIndexStore` (SQLite-backed) rather than
 //! the former in-memory `BM25Index`. `default_keyword_tokens` is the
@@ -159,17 +160,27 @@ pub fn recall(
     for (idx, hit) in vector_results.iter().enumerate() {
         // Skip items whose item_id is not a valid UUID — they cannot be
         // hydrated by bundle_store and are not in the corpus.
-        if Uuid::parse_str(&hit.item_id).is_err() {
-            continue;
-        }
-        vector_ranked.push((hit.item_id.clone(), idx + 1));
+        // P3-secfix: parse through Uuid and re-emit .to_string() so the key
+        // is always the Rust canonical lowercase-hyphenated form (e.g.
+        // "a1b2c3d4-..."). Without this, a vector hit stored with an uppercase
+        // UUID string (common from Apple-side exports) uses a different map key
+        // than a keyword hit for the same memory and the two contributions never
+        // fuse. Intra-port canonical form: Rust = Uuid::to_string() (lowercase).
+        let parsed = match Uuid::parse_str(&hit.item_id) {
+            Ok(u) => u,
+            Err(_) => continue,
+        };
+        let canonical_id = parsed.to_string();
+        vector_ranked.push((canonical_id.clone(), idx + 1));
         // Hamming distance as f32; lower = closer to probe.
-        vector_score_map.insert(hit.item_id.clone(), hit.distance as f32);
+        vector_score_map.insert(canonical_id, hit.distance as f32);
     }
 
     let mut keyword_ranked: Vec<(String, usize)> = Vec::new();
     let mut keyword_score_map: HashMap<String, f32> = HashMap::new();
     for (idx, (id, score)) in keyword_results.iter().enumerate() {
+        // id is Uuid-typed; .to_string() is always lowercase-hyphenated in Rust
+        // — the same canonical form used for vector hits above.
         let item_id = id.to_string();
         keyword_ranked.push((item_id.clone(), idx + 1));
         keyword_score_map.insert(item_id, *score);

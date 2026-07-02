@@ -16,7 +16,8 @@ import Testing
 ///      `invalidContent`), drawerNotFound, forwards to `DrawerStore.reanchorGated`.
 ///
 /// Coverage mandated by VERB-REA-01 BRR:
-///   - reanchor to a new room moves the drawer (peek/recall reflects new room)
+///   - room move completes without error (Drawer.room removed per ADR-017;
+///     direct room-position verification is not available via Drawer)
 ///   - reanchor to a new lattice updates the anchor
 ///   - empty reanchor → `invalidContent`
 ///   - non-existent rowID → `drawerNotFound`
@@ -80,7 +81,7 @@ struct ReanchorTests {
 
     // MARK: - DrawerStore.reanchorGated — room move
 
-    @Test("reanchorGated: updating room reflects in getDrawer")
+    @Test("reanchorGated: room move leaves lattice anchor unchanged")
     func reanchorGatedRoomMove() async throws {
         let (estate, _) = try await makeEstate()
         let drawer = try await captureOne(estate: estate, room: "room-original",
@@ -228,16 +229,15 @@ struct ReanchorTests {
         }
     }
 
-    @Test("Estate.reanchor: toRoom updates the drawer's room")
+    @Test("Estate.reanchor: toRoom call succeeds without error (Drawer.room removed per ADR-017)")
     func estateReanchorToRoom() async throws {
         let (estate, _) = try await makeEstate()
         let drawer = try await captureOne(estate: estate, room: "original-room")
 
+        // Call succeeds; no assertion on room position — Drawer no longer carries
+        // a .room field per ADR-017, so peek cannot surface the move directly.
         try await estate.reanchor(rowID: drawer.id, toRoom: "moved-room")
-
         _ = try await estate._peekDrawer(id: drawer.id)
-        // Room move is verified via node tree resolution, not via Drawer.room
-        // (wing/room removed from Drawer per ADR-017).
     }
 
     @Test("Estate.reanchor: toLattice updates the drawer's lattice anchor")
@@ -294,5 +294,47 @@ struct ReanchorTests {
 
         let after = try await estate._peekDrawer(id: drawer.id)
         #expect(after?.udcCode == "200")
+    }
+
+    // MARK: - Finding B: reanchor rejects empty/whitespace-only wing
+
+    /// `Estate.reanchor` with `toWing: ""` must throw `invalidContent`.
+    ///
+    /// An empty wing string would create a nameless wing node and violate
+    /// the non-empty invariant the capture path enforces. Before this fix
+    /// the guard only checked `toWing != nil`, so an empty string silently
+    /// persisted as an estate state that capture would refuse to create.
+    @Test("Estate.reanchor: empty toWing is rejected with invalidContent")
+    func reanchorRejectsEmptyWing() async throws {
+        let (estate, _) = try await makeEstate()
+        let drawer = try await captureOne(estate: estate)
+
+        await #expect(throws: LocusKitError.self) {
+            try await estate.reanchor(rowID: drawer.id, toWing: "")
+        }
+    }
+
+    /// `Estate.reanchor` with `toWing: "   "` (whitespace-only) must also
+    /// throw `invalidContent`. Whitespace-only is equivalent to empty for
+    /// the wing name invariant.
+    @Test("Estate.reanchor: whitespace-only toWing is rejected with invalidContent")
+    func reanchorRejectsWhitespaceWing() async throws {
+        let (estate, _) = try await makeEstate()
+        let drawer = try await captureOne(estate: estate)
+
+        await #expect(throws: LocusKitError.self) {
+            try await estate.reanchor(rowID: drawer.id, toWing: "   ")
+        }
+    }
+
+    /// `Estate.reanchor` with a valid non-empty `toWing` must succeed —
+    /// the empty-wing guard must not block legitimate wing moves.
+    @Test("Estate.reanchor: non-empty toWing is accepted")
+    func reanchorAcceptsNonEmptyWing() async throws {
+        let (estate, _) = try await makeEstate()
+        let drawer = try await captureOne(estate: estate)
+
+        // Must not throw.
+        try await estate.reanchor(rowID: drawer.id, toWing: "Personal")
     }
 }

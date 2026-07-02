@@ -3,7 +3,7 @@
 // Apple NaturalLanguage sentence embedding provider.
 //
 // Uses `NLEmbedding.sentenceEmbedding(for:)` — the system-bundled
-// Apple sentence similarity model available on macOS 15+/iOS 18+.
+// Apple sentence similarity model; guarded by `#if canImport(NaturalLanguage)`.
 // No model asset download required: the embedding model ships with the
 // OS. This makes it the "cheap, immediate" Apple-native comparative
 // surface (vs. the CoreML bring-your-own-model path in the named

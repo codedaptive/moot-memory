@@ -334,21 +334,20 @@ impl Estate {
         // Establish the estate's Ed25519 federation identity on first
         // open. The keypair is the signing identity for federation grants
         // (DECISION_SYNCKIT_DESIGN_2026-05-19 §8); minting it once and
-        // persisting both halves to the manifest makes the public key
+        // persisting the public half to the manifest makes the public key
         // stable across every subsequent open. Key generation is
         // intrinsically random — like the estate UUID minted at create —
-        // so it is exempt from the deterministic-engine rule. Stored as
+        // so it is exempt from the deterministic-engine rule. The private
+        // signing key is intentionally not persisted here: the manifest is
+        // a normal key/value table and row encryption does not protect
+        // manifest.value, so storing raw key bytes here would expose the
         if manifest.ed25519_public_key.is_none() {
             use base64::Engine;
             let b64 = base64::engine::general_purpose::STANDARD;
             let signing_key = SigningKey::generate(&mut OsRng);
             let pub_b64 = b64.encode(signing_key.verifying_key().as_bytes());
-            let priv_b64 = b64.encode(signing_key.as_bytes());
             store
                 .set_meta(ManifestKey::Ed25519PublicKey.as_str(), &pub_b64)
-                .map_err(|e| EstateError::SubstrateUnavailable(e.to_string()))?;
-            store
-                .set_meta(ManifestKey::Ed25519PrivateKeyWrapped.as_str(), &priv_b64)
                 .map_err(|e| EstateError::SubstrateUnavailable(e.to_string()))?;
         }
         // Backfill the per-container OR aggregate from the active drawer set
@@ -1114,9 +1113,11 @@ mod tests {
         assert!(estate.close().is_ok());
     }
 
-    /// First open mints an Ed25519 keypair and persists it to the
+    /// First open mints an Ed25519 identity and persists only the public
+    /// half to the manifest. The private signing key must not be written
+    /// to manifest.value because that table is not secret storage.
     #[test]
-    fn open_mints_ed25519_keypair_on_first_open() {
+    fn open_mints_ed25519_public_key_on_first_open_without_persisting_private_key() {
         let store = Arc::new(FakeStore::new(
             "v1.0",
             "55555555-5555-5555-5555-555555555555",
@@ -1125,25 +1126,21 @@ mod tests {
         let m = estate.manifest().unwrap();
         assert!(m.ed25519_public_key.is_some(), "public key should be minted");
         assert!(
-            m.ed25519_private_key_wrapped.is_some(),
-            "private key should be minted"
+            m.ed25519_private_key_wrapped.is_none(),
+            "private key must not be persisted in the manifest"
         );
-        // Both are base64 of 32-byte keys.
+        // The public key is base64 of a 32-byte Ed25519 verifying key.
         use base64::Engine;
         let b64 = base64::engine::general_purpose::STANDARD;
         let pub_bytes = b64
             .decode(m.ed25519_public_key.as_ref().unwrap())
             .expect("public key should be valid base64");
-        let priv_bytes = b64
-            .decode(m.ed25519_private_key_wrapped.as_ref().unwrap())
-            .expect("private key should be valid base64");
         assert_eq!(pub_bytes.len(), 32, "Ed25519 public key is 32 bytes");
-        assert_eq!(priv_bytes.len(), 32, "Ed25519 private key is 32 bytes");
     }
 
-    /// Re-opening an estate that already has keys does NOT regenerate them.
+    /// Re-opening an estate that already has a public identity does NOT regenerate it.
     #[test]
-    fn open_preserves_existing_ed25519_keypair() {
+    fn open_preserves_existing_ed25519_public_key() {
         let store = Arc::new(FakeStore::new(
             "v1.0",
             "66666666-6666-6666-6666-666666666666",
@@ -1151,9 +1148,8 @@ mod tests {
         let estate1 = Estate::open(store.clone(), OwnerCredentials::new("alice")).unwrap();
         let m1 = estate1.manifest().unwrap();
         let pub1 = m1.ed25519_public_key.clone().unwrap();
-        let priv1 = m1.ed25519_private_key_wrapped.clone().unwrap();
 
-        // Second open: keys should be identical.
+        // Second open: public key should be identical.
         let estate2 = Estate::open(store.clone(), OwnerCredentials::new("alice")).unwrap();
         let m2 = estate2.manifest().unwrap();
         assert_eq!(
@@ -1161,10 +1157,9 @@ mod tests {
             &pub1,
             "public key stable across re-opens"
         );
-        assert_eq!(
-            m2.ed25519_private_key_wrapped.as_ref().unwrap(),
-            &priv1,
-            "private key stable across re-opens"
+        assert!(
+            m2.ed25519_private_key_wrapped.is_none(),
+            "private key remains absent across re-opens"
         );
     }
 

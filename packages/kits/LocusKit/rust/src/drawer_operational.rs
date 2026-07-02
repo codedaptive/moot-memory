@@ -405,6 +405,7 @@ mod tests {
     }
 
     #[test]
+    // The accessor reads a 6-bit field from bits 0-5, not a low nibble.
     fn capture_channel_accessor_reads_low_nibble() {
         let mut d = sample();
         d.operational_bitmap = CaptureChannel::Ocr.raw_value();

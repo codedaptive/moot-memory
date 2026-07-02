@@ -43,8 +43,7 @@ struct SummariesTests {
     }
 
     /// Build a Drawer rooted at `parentNodeId` (a room node's UUID string).
-    /// `wing` and `room` are still carried on the Drawer row for
-    /// backward-compat but listWings / listRooms resolve via the node tree.
+    /// `listWings` / `listRooms` resolve via the node tree using this ID.
     private func d(id: String, parentNodeId: String, filedAt: Date? = nil) -> Drawer {
         Drawer(
             id: TestStorage.tid(id),
@@ -57,10 +56,8 @@ struct SummariesTests {
     }
 
     /// Tombstone a drawer directly via the underlying SQLite handle.
-    /// `addDrawer` does not expose tombstoning at this revision, so
-    /// the test fixture writes the column itself. This mirrors the
-    /// way LOCI-2 / Rev 2.0 will manage tombstones once the
-    /// soft-delete machinery lands.
+    /// `addDrawer` does not expose tombstoning at the store level, so
+    /// the test fixture writes the tombstone column directly.
     private func tombstone(drawerId: String, in url: URL) throws {
         var handle: OpaquePointer?
         let flags = SQLITE_OPEN_READWRITE

@@ -8,14 +8,12 @@
 //
 // ## Why this exists (the counts-table change set)
 //
-// Today the basis is rebuilt FROM SCRATCH on every (re)index: re-read every
-// chunk, re-tokenize, rebuild the counts from zero, then factorize. The counts
-// are NOT persisted — only the finished basis is (see BasisStore) — so the only
-// available operation is "rebuild everything." But the counts are ADDITIVE: a
-// new chunk appends terms, increments document-frequencies, accumulates
-// co-occurrence. This store persists them so they can be MAINTAINED as we go —
-// incremented once per chunk on write — and a retrain reads the maintained
-// counts instead of re-reading the corpus.
+// The counts are ADDITIVE: a new chunk appends terms, increments
+// document-frequencies, accumulates co-occurrence. This store persists
+// them so they can be MAINTAINED as we go — incremented once per chunk
+// on write. The current code does persist maintained counts, but
+// Corpus.reindex still reads active chunks and trains from chunk texts;
+// the count-table-backed retrain path is not yet wired.
 //
 // This is HALF A of the change set (the maintained table). HALF B — re-projecting
 // existing chunk vectors when a basis actually changes (the coordinate swap) —

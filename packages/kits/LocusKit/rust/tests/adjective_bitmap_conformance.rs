@@ -273,7 +273,7 @@ fn composite_four_axis_roundtrip() {
 }
 
 // ============================================================
-// dreaming_recalc_required (cookbook §2.3 bit 26, §2.8 row 23, F17 cascade)
+// dreaming_recalc_required (cookbook §2.3 bit 26, F17 cascade)
 // ============================================================
 
 #[test]

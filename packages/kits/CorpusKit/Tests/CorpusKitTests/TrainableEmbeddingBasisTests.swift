@@ -13,7 +13,9 @@
 //   2. RECONSTRUCT DISPATCH: `EmbeddingModel.reconstruct(from:)` returns a
 //      provider whose embeddings round-trip the originally-trained provider's,
 //      for every trainable case; and throws `CorpusKitError.notTrainable` for
-//      the deterministic / named-model / FDC (stateless) cases — never crashes.
+//      deterministic / named-model (miniLM, mpNet, embeddingGemma) / FDC
+//      (stateless) cases — never crashes. Apple-only nlEmbedding and
+//      nlContextualEmbedding cases are tested in NLEmbeddingProviderTests.swift.
 //
 //   3. CAPABILITY DETECTION: `EmbeddingModel.isTrainable` is true exactly for
 //      RI/PPMI/LSA/NMF and false for deterministic/named/FDC.

@@ -264,6 +264,27 @@ impl DrawerStore for SqliteDrawerStore {
         self.0.all_drawers_bounded_projected(limit)
     }
 
+    // Forwarding overrides for the DESC bounded scan methods. Without these,
+    // trait-object dispatch (Arc<dyn DrawerStore>) hits the O(estate) default
+    // in the trait (load all_drawers, reverse, truncate) instead of the
+    // efficient (filed_at DESC, id DESC, LIMIT) SQL query in DrawerStoreCore.
+    // These forwards ensure the O(cap) path is taken for all wrapper callers
+    // (c-recall-portable fix).
+
+    fn all_drawers_bounded_desc(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<crate::drawer::Drawer>, LocusKitError> {
+        self.0.all_drawers_bounded_desc(limit)
+    }
+
+    fn all_drawers_bounded_projected_desc(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<crate::drawer::Drawer>, LocusKitError> {
+        self.0.all_drawers_bounded_projected_desc(limit)
+    }
+
     fn drawer_ids(&self) -> Result<Vec<crate::estate_types::RowID>, LocusKitError> {
         self.0.drawer_ids()
     }
@@ -657,6 +678,14 @@ impl DrawerStore for SqliteDrawerStore {
         now: i64,
     ) -> Result<(), LocusKitError> {
         self.0.seal_expunge_orphan_for_sweep(drawer_id, changed_by, now)
+    }
+
+    fn wipe_all_content(&self) -> Result<(), LocusKitError> {
+        // DrawerStoreCore::wipe_all_content runs UPDATE drawers SET content=''
+        // WHERE 1=1. All writes use the shared Arc<dyn Storage> which stays
+        // live until coordinator::close() drops it; calling this before close()
+        // ensures the SQLite connection is valid.
+        self.0.wipe_all_content()
     }
 
     fn list_wings(&self) -> Result<Vec<crate::summaries::WingSummary>, LocusKitError> {

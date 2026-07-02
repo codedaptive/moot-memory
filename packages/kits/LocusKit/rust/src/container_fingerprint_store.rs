@@ -313,9 +313,11 @@ impl ContainerFingerprintStore {
         for d in active_drawers {
             let (wing, room) = match node_names.get(&d.parent_node_id) {
                 Some(names) => names,
-                // Orphaned drawer — parent node missing from tree. Skip
-                // rather than panic; the aggregate is an over-approx so
-                // omitting one row is safe (it only forgoes a prune).
+                // Orphaned drawer — parent node missing from tree. Skipping
+                // is an under-approximation risk: if this row carries bits
+                // the filter requires, omitting it may falsely drop a
+                // container that should survive. Log and skip rather than
+                // panic, but note the hazard.
                 None => continue,
             };
             by_container

@@ -6,7 +6,7 @@
 //! (RI/PPMI/LSA/NMF) builds from the corpus (vocabulary, document-frequencies,
 //! co-occurrence counts, RI context vectors) — as an opaque per-provider blob
 //! plus two cheap, queryable trigger columns. See the Swift file and
-//! docs_internal/analysis/CORPUSKIT_INCREMENTAL_COUNTS_CHANGESET.md for the
+//! the maintainer CorpusKit incremental-counts changeset for the
 //! rationale: the counts are additive, so they can be MAINTAINED on write
 //! instead of rebuilt from scratch (re-read + re-tokenize) on every reindex.
 //!

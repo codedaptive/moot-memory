@@ -7,8 +7,8 @@
 // lands in the v1.1 model-bundle mission
 // (DECISION_EMBEDDING_INFERENCE_SEAM_2026-06-12).
 //
-// Conforms to VectorKit.EmbeddingProvider. Tokenizer held as a
-// private impl detail (see MiniLMTextProvider for the rationale).
+// Conforms to VectorKit.EmbeddingProvider. The stored tokenizer
+// property is public, matching the initializer's public injection seam.
 
 import Foundation
 import SubstrateTypes

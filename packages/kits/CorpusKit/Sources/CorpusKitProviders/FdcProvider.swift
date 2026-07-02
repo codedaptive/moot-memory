@@ -38,7 +38,7 @@
 //      a. Generate a deterministic D-dimensional unit vector for this node:
 //            seed    = FNV64(node_string)
 //            rng     = SplitMix64(seed)
-//            floats  = LCG-generated D values in [-1, 1]   (same LCG as RI)
+//            floats  = LCG-generated D values in [-1, 1]   (private FDC LCG constants; distinct from RI's SplitMix64-only draws)
 //            nodeVec = l2Normalize(floats)
 //         (If norm == 0, nodeVec = zero; this cannot happen for non-empty
 //          code strings but is handled by the zero-vector passthrough in
@@ -50,9 +50,9 @@
 //   5. Return as the embedFloat vector.
 //   6. `embed` projects it through FloatSimHash(seed: FDC_PROJECTION_SEED).
 //
-//   The PRNG sequence is the SAME LCG used by the deterministic provider
-//   in CorpusKit.swift (FNV-1a hash → SplitMix64 → LCG draw). Both ports
-//   use the same constants; the sequence is bit-identical.
+//   The FDC PRNG sequence seeds with FNV.hash64, advances SplitMix64
+//   once, then draws from private FDC LCG constants. RI's riIndexVector
+//   uses repeated SplitMix64 draws for position/sign pairs; no LCG stage.
 //
 // ## Zero-vector contract
 //
