@@ -15,9 +15,9 @@ let package = Package(
         .library(name: "VectorKit", targets: ["VectorKit"])
     ],
     dependencies: [
-        .package(url: "https://github.com/codedaptive/moot-core.git", branch: "main"),
-        .package(url: "https://github.com/codedaptive/moot-semantics.git", branch: "main"),
-        .package(url: "https://github.com/codedaptive/moot-system.git", branch: "main"),
+        .package(url: "https://github.com/codedaptive/moot-core.git", exact: "1.0.14"),
+        .package(url: "https://github.com/codedaptive/moot-semantics.git", exact: "1.0.14"),
+        .package(url: "https://github.com/codedaptive/moot-system.git", exact: "1.0.14"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0")
     ],
     targets: [

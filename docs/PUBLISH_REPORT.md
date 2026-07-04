@@ -2,7 +2,7 @@
 # Publish Report
 
 Venue: `moot-memory`
-Source commit: `aa4eee3f5c75357f2db7769f1a1a50dcfa808ea1`
+Source commit: `cc4e5ad00098d950deba594d75d77eec299dd797`
 
 ## Loaded Packages
 
@@ -23,8 +23,8 @@ Removed internal/process comment lines:
 - `packages/kits/CorpusKit/Sources/CorpusKit/BundleStore.swift`: 2 line(s)
 - `packages/kits/CorpusKit/Sources/CorpusKit/Chunk.swift`: 1 line(s)
 - `packages/kits/CorpusKit/Sources/CorpusKit/Chunker.swift`: 1 line(s)
-- `packages/kits/CorpusKit/Sources/CorpusKit/CorpusIngestQueue.swift`: 12 line(s)
-- `packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift`: 16 line(s)
+- `packages/kits/CorpusKit/Sources/CorpusKit/CorpusIngestQueue.swift`: 23 line(s)
+- `packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift`: 20 line(s)
 - `packages/kits/CorpusKit/Sources/CorpusKit/Engine/SparseTypes.swift`: 1 line(s)
 - `packages/kits/CorpusKit/Sources/CorpusKit/Tokenizer.swift`: 1 line(s)
 - `packages/kits/CorpusKit/Sources/CorpusKit/TrainableEmbeddingBasis.swift`: 2 line(s)
@@ -63,7 +63,7 @@ Removed internal/process comment lines:
 - `packages/kits/CorpusKit/rust-providers/src/fdc_provider.rs`: 2 line(s)
 - `packages/kits/CorpusKit/rust-providers/src/lib.rs`: 3 line(s)
 - `packages/kits/CorpusKit/rust-providers/src/lsa.rs`: 2 line(s)
-- `packages/kits/CorpusKit/rust-providers/src/nmf_provider.rs`: 2 line(s)
+- `packages/kits/CorpusKit/rust-providers/src/nmf_provider.rs`: 3 line(s)
 - `packages/kits/CorpusKit/rust-providers/src/ppmi.rs`: 3 line(s)
 - `packages/kits/CorpusKit/rust-providers/src/random_indexing.rs`: 3 line(s)
 - `packages/kits/CorpusKit/rust-providers/src/reduced_vocab.rs`: 1 line(s)
@@ -84,9 +84,9 @@ Removed internal/process comment lines:
 - `packages/kits/CorpusKit/rust/src/bundle_store.rs`: 4 line(s)
 - `packages/kits/CorpusKit/rust/src/chunk.rs`: 1 line(s)
 - `packages/kits/CorpusKit/rust/src/chunker.rs`: 1 line(s)
-- `packages/kits/CorpusKit/rust/src/corpus.rs`: 56 line(s)
-- `packages/kits/CorpusKit/rust/src/corpus_ingest_queue.rs`: 26 line(s)
-- `packages/kits/CorpusKit/rust/src/engine/inverted_index_store.rs`: 2 line(s)
+- `packages/kits/CorpusKit/rust/src/corpus.rs`: 60 line(s)
+- `packages/kits/CorpusKit/rust/src/corpus_ingest_queue.rs`: 38 line(s)
+- `packages/kits/CorpusKit/rust/src/engine/inverted_index_store.rs`: 3 line(s)
 - `packages/kits/CorpusKit/rust/src/engine/mod.rs`: 1 line(s)
 - `packages/kits/CorpusKit/rust/src/engine/sparse_types.rs`: 1 line(s)
 - `packages/kits/CorpusKit/rust/src/hybrid_recall.rs`: 1 line(s)
@@ -144,7 +144,7 @@ Removed internal/process comment lines:
 - `packages/kits/LocusKit/Sources/LocusKit/RecallTraceItem.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/Tunnel.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/TunnelOperational.swift`: 3 line(s)
-- `packages/kits/LocusKit/Tests/LocusKitTests/AuditAPITests.swift`: 1 line(s)
+- `packages/kits/LocusKit/Tests/LocusKitTests/AuditAPITests.swift`: 2 line(s)
 - `packages/kits/LocusKit/Tests/LocusKitTests/BitmapAuditTests.swift`: 1 line(s)
 - `packages/kits/LocusKit/Tests/LocusKitTests/BundleMaterializerTests.swift`: 1 line(s)
 - `packages/kits/LocusKit/Tests/LocusKitTests/CaptureTunnelTests.swift`: 2 line(s)
@@ -186,7 +186,7 @@ Removed internal/process comment lines:
 - `packages/kits/LocusKit/rust/src/drawer_operational.rs`: 7 line(s)
 - `packages/kits/LocusKit/rust/src/drawer_state_validator.rs`: 1 line(s)
 - `packages/kits/LocusKit/rust/src/drawer_store.rs`: 17 line(s)
-- `packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs`: 23 line(s)
+- `packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs`: 28 line(s)
 - `packages/kits/LocusKit/rust/src/error.rs`: 2 line(s)
 - `packages/kits/LocusKit/rust/src/estate.rs`: 10 line(s)
 - `packages/kits/LocusKit/rust/src/estate_verbs.rs`: 34 line(s)
@@ -219,7 +219,7 @@ Removed internal/process comment lines:
 - `packages/kits/VectorKit/Sources/VectorKit/Engine/FloatBruteForceIndex.swift`: 1 line(s)
 - `packages/kits/VectorKit/Sources/VectorKit/Engine/VectorRecordKey.swift`: 1 line(s)
 - `packages/kits/VectorKit/Sources/VectorKit/FloatSimHashEmbeddingProvider.swift`: 1 line(s)
-- `packages/kits/VectorKit/Sources/VectorKit/VectorStore.swift`: 5 line(s)
+- `packages/kits/VectorKit/Sources/VectorKit/VectorStore.swift`: 6 line(s)
 - `packages/kits/VectorKit/Tests/VectorKitTests/BruteForceIndexTests.swift`: 1 line(s)
 - `packages/kits/VectorKit/Tests/VectorKitTests/CapturePathBenchmarkTests.swift`: 4 line(s)
 - `packages/kits/VectorKit/Tests/VectorKitTests/FloatBruteForceIndexTests.swift`: 1 line(s)
@@ -280,6 +280,6 @@ Rewritten cross-venue Cargo dependencies:
 Mechanical publish: source export, comment scrubbing, provenance generation,
 cross-venue Cargo dependency rewriting, root SwiftPM manifest generation, root
 Cargo workspace generation, changelog entry, commit, lockstep `v` tag, and
-push. Cross-venue dependencies reference `main`; version-pinned cross-venue
-dependencies, precompiled binary artifacts, generated API reference docs, and
-full conformance-test certification are later publisher phases.
+push. Cross-venue dependencies are pinned to the lockstep `v` tag;
+precompiled binary artifacts, generated API reference docs, and full
+conformance-test certification are later publisher phases.

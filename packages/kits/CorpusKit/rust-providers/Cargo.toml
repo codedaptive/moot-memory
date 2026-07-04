@@ -16,12 +16,12 @@ corpus-kit = { path = "../rust" }
 # F5b: substrate-types provides FNV-1a as a public substrate atomic
 # (I-25). DeterministicTokenizer consumes substrate_types::fnv::hash32
 # by name instead of reimplementing the hash inline.
-substrate-types = { package = "substrate-types", git = "https://github.com/codedaptive/moot-core", branch = "main" }
+substrate-types = { package = "substrate-types", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.14" }
 # substrate-kernel: canonical float-vector ops (l2_normalize, dot, cosine).
 # RandomIndexingProvider calls substrate_kernel::float_vec_ops::l2_normalize
 # instead of the former inline implementation. Layering: corpus-kit-providers
 # Authority: DECISION_LIFT_PACKAGE_SWIFT_RULE_2026-05-28 + arch mandate §4.
-substrate-kernel = { package = "substrate-kernel", git = "https://github.com/codedaptive/moot-core", branch = "main" }
+substrate-kernel = { package = "substrate-kernel", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.14" }
 # B2-5: the named text providers conform to vectorkit::EmbeddingProvider
 # and project pooled vectors through substrate_ml::float_simhash::project
 # (the conformance-gated, bit-identical Swift/Rust SimHash). engram-lib
@@ -29,15 +29,15 @@ substrate-kernel = { package = "substrate-kernel", git = "https://github.com/cod
 # Swift's CorpusKitProviders target carries (VectorKit, SubstrateML,
 # EngramLib); the seam shape is identical across ports.
 vectorkit = { path = "../../VectorKit/rust" }
-substrate-ml = { package = "substrate-ml", git = "https://github.com/codedaptive/moot-core", branch = "main" }
-engram-lib = { package = "engram-lib", git = "https://github.com/codedaptive/moot-core", branch = "main" }
+substrate-ml = { package = "substrate-ml", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.14" }
+engram-lib = { package = "engram-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.14" }
 # FDCProvider: text → FDC code via lattice-lib's Fdc::encode (the Rust port
 # of LatticeLib's FDC runtime). eidetic-lib is not needed directly (FDCProvider
 # calls the lattice-lib surface only) but is declared here for structural
 # parity with Swift's CorpusKitProviders depending on EideticLib.
 # Authority: ADR-010 Decision B (FDC co-classification signal).
-lattice-lib = { package = "lattice-lib", git = "https://github.com/codedaptive/moot-semantics", branch = "main" }
-eidetic-lib = { package = "eidetic-lib", git = "https://github.com/codedaptive/moot-semantics", branch = "main" }
+lattice-lib = { package = "lattice-lib", git = "https://github.com/codedaptive/moot-semantics", tag = "v1.0.14" }
+eidetic-lib = { package = "eidetic-lib", git = "https://github.com/codedaptive/moot-semantics", tag = "v1.0.14" }
 
 [dev-dependencies]
 # B2-5: the embedding conformance test deserialises the shared canonical

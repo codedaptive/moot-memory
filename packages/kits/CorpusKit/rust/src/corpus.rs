@@ -1261,6 +1261,362 @@ impl Corpus {
     /// degenerate basis. Every subsequent batch (basis frozen) skips the bootstrap.
     ///
     /// Each item is `(text, source_id, now_millis)`.
+    /// IMPORT-ONLY ingest — the DISCRETE bulk-import drain path, kept separate
+    /// from `ingest_batch` (which the near-realtime daily-driving encode drain
+    /// uses for live single captures). This does ONLY chunk + bundle + BM25 +
+    /// source-map + maintained-counts (Windows 1 & 2 of `ingest_batch`). It does
+    /// NOT bootstrap-train the basis (Phase 1b) and does NOT embed (Phase 2 /
+    /// add_payloads): a bulk import re-trains the basis on the WHOLE corpus and
+    /// embeds every chunk ONCE at the end (`Corpus::reindex`), so the encode
+    /// drain's embed-now / bootstrap-train-as-you-go work — correct for a single
+    /// live capture — is pure repeated waste for an import. Keeping the two paths
+    /// discrete leaves daily-driving `ingest_batch` untouched.
+    pub fn ingest_batch_import(&self, items: &[(String, String, i64)]) -> CorpusKitResult<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        // EXT-4 SHARDED PIPELINE (durable SQLite estates): parallelize the
+        // compute AND the postings writes, serialize only the estate writer.
+        //
+        //   Phase P (parallel workers, ~IMPORT_SHARD_ITEMS items each): chunk +
+        //   tokenize (the CPU compute) and write each slice's BM25 postings into
+        //   a PRIVATE shard SQLite file beside the estate (encrypted with the
+        //   same install key — the sibling db.key applies). No writer contention:
+        //   N shards = N concurrent writers on N files.
+        //
+        //   Phase S (single writer): bundle rows through the estate connection
+        //   (unchanged — content-addressing/row-crypto/counts machinery), then
+        //   ONE attach+INSERT..SELECT..ORDER BY merge per shard into the durable
+        //   iix tables (SQLite copies internally, key-ordered → append-locality)
+        //   and one in-memory fold of the worker-computed tf maps.
+        //
+        // The serial per-item path remains for in-memory estates (no shard files;
+        // the IIX connection is ephemeral :memory: and cannot ATTACH across).
+        let shard_target = match &self.storage.configuration().backend {
+            persistence_kit::BackendConfiguration::Sqlite { path, .. } => {
+                let p = std::path::Path::new(path);
+                match (p.parent(), p.file_stem()) {
+                    // Estate db stem stamps every shard name so two estates
+                    // sharing one directory can never collide on a shard path
+                    (Some(dir), Some(stem)) => {
+                        Some((dir.to_path_buf(), stem.to_string_lossy().to_string()))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some((dir, stem)) = shard_target {
+            return self.ingest_batch_import_sharded(items, &dir, &stem);
+        }
+        self.ingest_batch_import_serial(items)
+    }
+
+    /// Items per import work slice. Fixed (not n/cores) so a 10k pass yields
+    /// more slices than workers — better load balancing, same rationale as
+    /// REEMBED_BATCH_SIZE. Slice COUNT scales with import size; worker/thread
+    /// count does NOT — it is capped at available_parallelism() in
+    /// `ingest_batch_import_sharded` (each worker owns ONE shard file and pulls
+    /// slices from a shared counter).
+    const IMPORT_SHARD_ITEMS: usize = 2500;
+
+    /// The EXT-4 sharded import body — see `ingest_batch_import`.
+    /// `estate_stem` is the estate db filename stem; it stamps shard names.
+    fn ingest_batch_import_sharded(
+        &self,
+        items: &[(String, String, i64)],
+        shard_dir: &std::path::Path,
+        estate_stem: &str,
+    ) -> CorpusKitResult<()> {
+        use crate::engine::inverted_index_store::IngestPostingsShard;
+
+        // Sweep stale shards from a CRASHED prior import of THIS estate (name
+        // prefix carries the estate stem, so other estates' live shards in a
+        // shared directory are never touched). Safe under the import drain
+        // lease, which serializes imports per estate; a concurrent same-estate
+        // import is a caller bug that the exclusive create below surfaces.
+        let stale_prefix = format!("import-shard-{estate_stem}-");
+        if let Ok(entries) = std::fs::read_dir(shard_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(&stale_prefix) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+
+        // Phase P — parallel, BOUNDED: chunk + tokenize + shard-write on a pool
+        // of at most available_parallelism() workers (full width — import is a
+        // batch job). Each worker owns ONE estate-stamped shard file, created
+        // with exclusive semantics, and pulls slice INDICES from a shared atomic
+        // counter (work-stealing). The earlier shape spawned one thread AND one
+        // shard file per 2500-item slice — thread count scaled with import size
+        // were `import-shard-{i}.sqlite`, predictable and estate-agnostic
+        // in slice order, so bundle rows and postings folds are byte-identical
+        // to the serial loop (chunk_with_default_hlc is a pure function of its
+        // arguments — fresh HLC generator per call).
+        type SlicePostings = Vec<(String, std::collections::HashMap<String, usize>, usize)>;
+        type SliceOut = (usize, Vec<Vec<Chunk>>, SlicePostings);
+        type WorkerOut = (Option<String>, Vec<SliceOut>);
+        let slices: Vec<&[(String, String, i64)]> =
+            items.chunks(Self::IMPORT_SHARD_ITEMS).collect();
+        let n_slices = slices.len();
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(n_slices.max(1));
+        let slices_ref = &slices;
+        let next_slice = std::sync::atomic::AtomicUsize::new(0);
+        let next_ref = &next_slice;
+        let worker_outs: Vec<WorkerOut> = std::thread::scope(
+            |scope| -> CorpusKitResult<Vec<WorkerOut>> {
+                let handles: Vec<_> = (0..workers)
+                    .map(|w| {
+                        let shard_path = shard_dir
+                            .join(format!("import-shard-{estate_stem}-w{w}.sqlite"))
+                            .to_string_lossy()
+                            .to_string();
+                        scope.spawn(move || -> Result<WorkerOut, rusqlite::Error> {
+                            // Lazy shard creation: a worker that never claims a
+                            // slice leaves no file behind.
+                            let mut shard: Option<IngestPostingsShard> = None;
+                            let mut outs: Vec<SliceOut> = Vec::new();
+                            loop {
+                                let i = next_ref
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                if i >= slices_ref.len() {
+                                    break;
+                                }
+                                if shard.is_none() {
+                                    shard = Some(IngestPostingsShard::create(&shard_path)?);
+                                }
+                                let slice = slices_ref[i];
+                                let mut per_item: Vec<Vec<Chunk>> =
+                                    Vec::with_capacity(slice.len());
+                                let mut postings: SlicePostings = Vec::new();
+                                for (text, source_id, now_millis) in slice.iter() {
+                                    let chunks = chunk_with_default_hlc(
+                                        text,
+                                        source_id,
+                                        ChunkerConfiguration::default(),
+                                        *now_millis,
+                                    );
+                                    for chunk in &chunks {
+                                        let tokens = default_keyword_tokens(&chunk.text);
+                                        if tokens.is_empty() {
+                                            continue;
+                                        }
+                                        let mut tf: std::collections::HashMap<String, usize> =
+                                            std::collections::HashMap::new();
+                                        for t in &tokens {
+                                            *tf.entry(t.clone()).or_insert(0) += 1;
+                                        }
+                                        let chunk_id = chunk.id.to_string();
+                                        shard
+                                            .as_mut()
+                                            .expect("shard created on first claimed slice")
+                                            .add(&chunk_id, &tf, tokens.len());
+                                        postings.push((chunk_id, tf, tokens.len()));
+                                    }
+                                    per_item.push(chunks);
+                                }
+                                outs.push((i, per_item, postings));
+                            }
+                            let finished = match shard {
+                                Some(s) => Some(s.finish()?),
+                                None => None,
+                            };
+                            Ok((finished, outs))
+                        })
+                    })
+                    .collect();
+                let mut outs = Vec::with_capacity(handles.len());
+                for h in handles {
+                    match h.join() {
+                        Ok(res) => outs.push(res.map_err(|e| {
+                            CorpusKitError::StoreUnavailable(format!("import shard: {e:?}"))
+                        })?),
+                        Err(_) => {
+                            return Err(CorpusKitError::StoreUnavailable(
+                                "import shard worker panicked".into(),
+                            ))
+                        }
+                    }
+                }
+                Ok(outs)
+            },
+        )?;
+
+        // Reassemble slice outputs in slice order (workers claim slices in
+        // arbitrary interleave; the index restores the serial-loop order) and
+        // collect the per-worker shard paths for the merge pass.
+        let mut shard_paths: Vec<String> = Vec::new();
+        let mut slice_slots: Vec<Option<(Vec<Vec<Chunk>>, SlicePostings)>> =
+            (0..n_slices).map(|_| None).collect();
+        for (path, outs) in worker_outs {
+            if let Some(p) = path {
+                shard_paths.push(p);
+            }
+            for (i, per_item, postings) in outs {
+                slice_slots[i] = Some((per_item, postings));
+            }
+        }
+        let slice_outs: Vec<(Vec<Vec<Chunk>>, SlicePostings)> = slice_slots
+            .into_iter()
+            .enumerate()
+            .map(|(i, slot)| {
+                slot.ok_or_else(|| {
+                    CorpusKitError::StoreUnavailable(format!(
+                        "import slice {i} was never produced (worker exited early)"
+                    ))
+                })
+            })
+            .collect::<CorpusKitResult<_>>()?;
+
+        // Phase S — single writer. Window 1: bundle rows through the estate
+        // connection, committed per COMMIT_CHUNK_ITEMS (same bracket + same
+        // side-effects as the serial path: reactivation, source map, counts).
+        let row_store = self.storage.row_store();
+        let all_chunks: Vec<(&str, &Vec<Chunk>)> = slice_outs
+            .iter()
+            .zip(slices.iter())
+            .flat_map(|((per_item, _), slice)| {
+                slice
+                    .iter()
+                    .map(|(_, source_id, _)| source_id.as_str())
+                    .zip(per_item.iter())
+            })
+            .collect();
+        for window in all_chunks.chunks(COMMIT_CHUNK_ITEMS) {
+            row_store
+                .begin_transaction()
+                .map_err(|e| CorpusKitError::StoreUnavailable(e.to_string()))?;
+            let res = (|| -> CorpusKitResult<()> {
+                for (source_id, chunks) in window {
+                    if chunks.is_empty() {
+                        continue;
+                    }
+                    self.removed_source_store.clear_removed(source_id)?;
+                    let inserted_chunks = self.bundle_store.insert(chunks)?;
+                    if let Ok(mut csm) = self.chunk_source_map.lock() {
+                        for chunk in chunks.iter() {
+                            csm.insert(chunk.id, source_id.to_string());
+                        }
+                    }
+                    self.fold_chunks_into_counts(&inserted_chunks)?;
+                }
+                Ok(())
+            })();
+            match res {
+                Ok(()) => row_store
+                    .commit_transaction()
+                    .map_err(|e| CorpusKitError::StoreUnavailable(e.to_string()))?,
+                Err(e) => {
+                    let _ = row_store.rollback_transaction();
+                    return Err(e);
+                }
+            }
+        }
+
+        // Shard merges: one attach + sorted INSERT..SELECT per worker shard
+        // (durable tables), then one in-memory fold of the worker-computed
+        // postings in slice order. Merge order does not affect the durable
+        // tables (keyed INSERT OR REPLACE); the fold is per-chunk keyed, folded
+        // in slice order for exact serial-path equivalence.
+        for path in &shard_paths {
+            self.inverted_index
+                .merge_shard(path)
+                .map_err(|e| CorpusKitError::StoreUnavailable(format!("shard merge: {e:?}")))?;
+            IngestPostingsShard::remove_file(path);
+        }
+        for (_, postings) in &slice_outs {
+            self.inverted_index
+                .fold_postings(postings)
+                .map_err(|e| CorpusKitError::StoreUnavailable(format!("postings fold: {e:?}")))?;
+        }
+        // NO bootstrap train, NO embed — Corpus::reindex trains on the full
+        // corpus and embeds every chunk ONCE after coverage completes.
+        Ok(())
+    }
+
+    /// The serial import body — in-memory estates only (no shard files; the IIX
+    /// connection is ephemeral and cannot ATTACH across connections).
+    fn ingest_batch_import_serial(&self, items: &[(String, String, i64)]) -> CorpusKitResult<()> {
+        // BM25 index work deferred to window 2: (chunk_id, tokens, now_secs_str).
+        let mut index_jobs: Vec<(String, Vec<String>, String)> = Vec::new();
+
+        // Window 1 — storage connection (bundle insert + source reactivation +
+        // maintained-counts fold), committed per COMMIT_CHUNK_ITEMS so the held
+        // write lock stays bounded (same rationale as ingest_batch Window 1).
+        let row_store = self.storage.row_store();
+        for item_chunk in items.chunks(COMMIT_CHUNK_ITEMS) {
+            row_store
+                .begin_transaction()
+                .map_err(|e| CorpusKitError::StoreUnavailable(e.to_string()))?;
+            let res = (|| -> CorpusKitResult<()> {
+                for (text, source_id, now_millis) in item_chunk {
+                    let chunks = chunk_with_default_hlc(
+                        text,
+                        source_id,
+                        ChunkerConfiguration::default(),
+                        *now_millis,
+                    );
+                    if !chunks.is_empty() {
+                        self.removed_source_store.clear_removed(source_id)?;
+                        let inserted_chunks = self.bundle_store.insert(&chunks)?;
+                        let now_str = format!("{}", now_millis / 1000);
+                        for chunk in &chunks {
+                            let tokens = default_keyword_tokens(&chunk.text);
+                            index_jobs.push((chunk.id.to_string(), tokens, now_str.clone()));
+                        }
+                        if let Ok(mut csm) = self.chunk_source_map.lock() {
+                            for chunk in &chunks {
+                                csm.insert(chunk.id, source_id.clone());
+                            }
+                        }
+                        self.fold_chunks_into_counts(&inserted_chunks)?;
+                    }
+                }
+                Ok(())
+            })();
+            match res {
+                Ok(()) => row_store
+                    .commit_transaction()
+                    .map_err(|e| CorpusKitError::StoreUnavailable(e.to_string()))?,
+                Err(e) => {
+                    let _ = row_store.rollback_transaction();
+                    return Err(e);
+                }
+            }
+        }
+
+        // Window 2 — BM25 sidecar (private connection), committed per chunk.
+        for job_chunk in index_jobs.chunks(COMMIT_CHUNK_ITEMS) {
+            self.inverted_index
+                .begin_batch()
+                .map_err(|e| CorpusKitError::StoreUnavailable(e.to_string()))?;
+            let res = (|| -> Result<(), rusqlite::Error> {
+                for (chunk_id, tokens, now_str) in job_chunk {
+                    self.inverted_index.index(chunk_id, tokens, now_str)?;
+                }
+                Ok(())
+            })();
+            match res {
+                Ok(()) => self
+                    .inverted_index
+                    .commit_batch()
+                    .map_err(|e| CorpusKitError::StoreUnavailable(e.to_string()))?,
+                Err(e) => {
+                    let _ = self.inverted_index.rollback_batch();
+                    return Err(CorpusKitError::StoreUnavailable(e.to_string()));
+                }
+            }
+        }
+        // NO bootstrap train, NO embed — Corpus::reindex trains on the full corpus
+        // and embeds every chunk ONCE after coverage completes.
+        Ok(())
+    }
+
     pub fn ingest_batch(&self, items: &[(String, String, i64)]) -> CorpusKitResult<()> {
         if items.is_empty() {
             return Ok(());
@@ -1617,22 +1973,71 @@ impl Corpus {
         let chunks = self.active_chunks()?;
         let filed_at_secs = now_millis / 1000;
 
-        // Fan out: refresh every held provider slot. For N=1 this loops once over
-        // the default slot — byte-identical to the pre-6a-iii reindex. Mirrors
-        // Swift's `Corpus.reindex` per-slot loop.
-        for slot_index in 0..self.slots.len() {
-            if self.slots[slot_index].fresh_basis_blob.is_some() {
-                // Train a FRESH basis on the full corpus snapshot and install the
-                // trained provider for this slot. Training fresh (not in place) is
-                // required because train_on_corpus is additive — see
-                // ProviderSlot::fresh_basis_blob.
-                self.train_and_persist_basis(slot_index, &chunks, filed_at_secs)?;
-            }
+        // Phase logging throughout: on a large corpus this call legitimately
+        // runs tens of minutes (full basis retrain + full re-embed); without
+        // log lines that is indistinguishable from a hang (the v1.0.13 vault
+        // import triage required sampling the process to prove it was alive).
+        // Swift twin logs the same phases via corpusLog.
+        eprintln!(
+            "[corpus] reindex: start — {} active chunks, {} provider slots",
+            chunks.len(),
+            self.slots.len()
+        );
 
-            // Re-embed every chunk under this slot's (now possibly retrained)
-            // provider, replacing stale vectors. Done whether or not a retrain
-            // occurred: for a non-trainable slot (no factory blob) reindex is a
-            // pure vector refresh under the current basis.
+        // Phase 1 — train every trainable slot CONCURRENTLY. The five-signal
+        // default carries FOUR trainable providers (RI / PPMI / LSA / NMF) whose
+        // trainings are independent computations over the same chunk snapshot:
+        // each touches only ITS slot's counts accumulator + serving handle (both
+        // per-slot Mutexes), and persists via single-statement upserts serialized
+        // by the storage mutex. Running them serially made a large reindex wait
+        // ΣT(train) on one core with LSA's SVD + NMF's ALS dominating; concurrent
+        // slots wait max(T) instead. Per-slot output is byte-identical to the
+        // serial loop — the fixed-sweep kernels are untouched (ADR-022) and no
+        // slot reads another's state. LSA and NMF each derive the ADR-022 reduced
+        // vocabulary with the same pure deterministic selection, so concurrent
+        // duplicate computation of it is benign (identical artifact). For N=1
+        // this spawns one thread — same work, same result as the plain call.
+        std::thread::scope(|scope| -> CorpusKitResult<()> {
+            let chunks_ref = &chunks;
+            let mut handles = Vec::new();
+            for slot_index in 0..self.slots.len() {
+                if self.slots[slot_index].fresh_basis_blob.is_some() {
+                    // Train a FRESH basis on the full corpus snapshot and install
+                    // the trained provider for this slot. Training fresh (not in
+                    // place) is required because train_on_corpus is additive — see
+                    // ProviderSlot::fresh_basis_blob.
+                    handles.push(scope.spawn(move || {
+                        self.train_and_persist_basis(slot_index, chunks_ref, filed_at_secs)
+                    }));
+                }
+            }
+            if !handles.is_empty() {
+                eprintln!(
+                    "[corpus] reindex: training {} trainable slots concurrently over {} texts",
+                    handles.len(),
+                    chunks_ref.len()
+                );
+            }
+            for h in handles {
+                h.join().expect("slot train thread panicked")?;
+            }
+            Ok(())
+        })?;
+        eprintln!("[corpus] reindex: training complete — bases persisted");
+
+        // Phase 2 — re-embed every chunk under each slot's (now possibly
+        // retrained) provider, replacing stale vectors. Done whether or not a
+        // retrain occurred: for a non-trainable slot (no factory blob) reindex is
+        // a pure vector refresh under the current basis. Serial per slot: each
+        // re-embed already fans its embed compute across all cores and funnels
+        // one bulk single-writer transaction (replace_model_vectors).
+        for slot_index in 0..self.slots.len() {
+            eprintln!(
+                "[corpus] reindex: re-embedding {} chunks (slot {}/{})",
+                chunks.len(),
+                slot_index + 1,
+                self.slots.len()
+            );
             self.reembed_chunks(slot_index, &chunks, filed_at_secs)?;
         }
 
@@ -1640,6 +2045,11 @@ impl Corpus {
         // accumulators were kept current by the ingest fold path; persisting here
         // re-anchors the growth trigger to the just-reindexed state.
         self.persist_maintained_counts(filed_at_secs)?;
+        eprintln!(
+            "[corpus] reindex: complete — {} chunks re-embedded across {} slots",
+            chunks.len(),
+            self.slots.len()
+        );
         Ok(())
     }
 
@@ -1718,50 +2128,163 @@ impl Corpus {
         chunks: &[Chunk],
         filed_at_secs: i64,
     ) -> CorpusKitResult<()> {
+        // Batch size for the PARALLEL re-embed. Fixed (not n/cap) on purpose: it
+        // makes a corpus produce MORE batches than workers, so a slow batch cannot
+        // stall the pool the way exact per-core slices can (better load balancing).
+        // ~3000 amortizes per-batch overhead while a realistic import (tens of
+        // thousands of chunks) still keeps every worker busy. Also the natural unit
+        // for a future chunked-commit write. Batch COUNT scales with corpus size;
+        // thread count does NOT — it is capped at embed_concurrency_cap() below
+        // (parity with Swift boundedConcurrentMap(batches, cap:)).
+        const REEMBED_BATCH_SIZE: usize = 3000;
+
         let guard = self.slots[slot_index]
             .handle
             .lock()
             .map_err(|_| CorpusKitError::StoreUnavailable("provider lock poisoned".into()))?;
         let provider = guard.provider();
         let model_id = provider.model_id().to_string();
-        let mut batch: Vec<VectorPayloadInput> = Vec::with_capacity(chunks.len() * 2);
-        for chunk in chunks {
-            // Delete-all before re-adding so a chunk that already had vectors
-            // under a previous basis ends up with exactly the new vectors, not a
-            // mix. delete_all_vectors clears both lanes (v0 binary + v1 float).
-            // The re-adds are batched below.
-            self.vector_store
-                .delete_all_vectors(&chunk.id.to_string(), &model_id)
-                .map_err(|e| CorpusKitError::StoreUnavailable(format!("{:?}", e)))?;
-            // Single inference pass (see ingest): embed_pair returns the engram
-            // and float vector from ONE computation; compute-then-project
-            // providers override it.
-            let (engram, floats) = provider
-                .embed_pair(&chunk.text)
-                .map_err(|e| CorpusKitError::EmbeddingFailed(format!("{:?}", e)))?;
-            batch.push(VectorPayloadInput {
-                item_id: chunk.id.to_string(),
-                vector_index: 0,
-                payload: VectorPayload::from_engram(&engram),
-                model_id: model_id.clone(),
-                model_version: provider.model_version().to_string(),
-                filed_at_unix_secs: filed_at_secs,
-            });
-            if !floats.is_empty() {
-                batch.push(VectorPayloadInput {
-                    item_id: chunk.id.to_string(),
-                    vector_index: 1,
-                    payload: VectorPayload::from_f32(&floats),
-                    model_id: model_id.clone(),
-                    model_version: provider.model_version().to_string(),
-                    filed_at_unix_secs: filed_at_secs,
-                });
-            }
-        }
-        // Single batched write: O(1) sidecar + index rebuild for the whole
-        // re-embed, after all per-chunk deletes have cleared the old rows.
+        let model_version = provider.model_version().to_string();
+        // Shared, thread-safe refs captured by the embed workers. `provider` is
+        // `&dyn EmbeddingProvider` (Send + Sync — embed_pair is a pure function of
+        // (text, fixed basis), so concurrent &self calls are safe); the model
+        // strings are borrowed read-only. Same sharing pattern as ingest_batch's
+        // parallel embed phase.
+        let provider_ref = provider;
+        let model_id_ref = &model_id;
+        let model_version_ref = &model_version;
+
+        // Phase 1 (PARALLEL, BOUNDED): embed the fixed-size CONTIGUOUS batches on
+        // a pool of at most embed_concurrency_cap() persistent workers. Workers
+        // pull batch INDICES from a shared atomic counter (work-stealing), so a
+        // slow batch never stalls the others; results carry their batch index and
+        // are reassembled in batch order, so the flattened payload vector is
+        // byte-identical to the serial path — determinism / cross-port conformance
+        // preserved. The earlier shape spawned one scoped thread PER BATCH
+        // (ceil(len / REEMBED_BATCH_SIZE) threads, unbounded — a very large corpus
+        // caps live threads exactly like ingest_batch and Swift's
+        // boundedConcurrentMap(batches, cap: embedConcurrencyCap).
+        let batches: Vec<&[Chunk]> = chunks.chunks(REEMBED_BATCH_SIZE).collect();
+        let n_batches = batches.len();
+        let workers = self.embed_concurrency_cap().min(n_batches.max(1));
+        let batches_ref = &batches;
+        let next_batch = std::sync::atomic::AtomicUsize::new(0);
+        let next_ref = &next_batch;
+        // Progress counter: on a large corpus this phase runs many minutes; a
+        // line every ~5k chunks keeps the daemon log distinguishable from a
+        // hang. Atomic (batches complete concurrently); logging order may
+        // interleave but counts are exact. Swift twin: the Mutex-guarded
+        // counter in Corpus.reembedChunks.
+        const PROGRESS_STRIDE: usize = 5_000;
+        let total_chunks = chunks.len();
+        let embedded = std::sync::atomic::AtomicUsize::new(0);
+        let embedded_ref = &embedded;
+        let batch_rows: Vec<Vec<VectorPayloadInput>> = std::thread::scope(
+            |scope| -> Result<Vec<Vec<VectorPayloadInput>>, CorpusKitError> {
+                let handles: Vec<_> = (0..workers)
+                    .map(|_| {
+                        scope.spawn(
+                            move || -> Result<Vec<(usize, Vec<VectorPayloadInput>)>, CorpusKitError> {
+                                let mut out: Vec<(usize, Vec<VectorPayloadInput>)> = Vec::new();
+                                loop {
+                                    // Claim the next unprocessed batch index; exit when done.
+                                    let i = next_ref
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    if i >= batches_ref.len() {
+                                        break;
+                                    }
+                                    let batch = batches_ref[i];
+                                    let mut rows: Vec<VectorPayloadInput> =
+                                        Vec::with_capacity(batch.len() * 2);
+                                    for chunk in batch {
+                                        // Single inference pass: embed_pair returns the engram
+                                        // and float vector from ONE computation.
+                                        let (engram, floats) =
+                                            provider_ref.embed_pair(&chunk.text).map_err(|e| {
+                                                CorpusKitError::EmbeddingFailed(format!("{:?}", e))
+                                            })?;
+                                        rows.push(VectorPayloadInput {
+                                            item_id: chunk.id.to_string(),
+                                            vector_index: 0,
+                                            payload: VectorPayload::from_engram(&engram),
+                                            model_id: model_id_ref.clone(),
+                                            model_version: model_version_ref.clone(),
+                                            filed_at_unix_secs: filed_at_secs,
+                                        });
+                                        if !floats.is_empty() {
+                                            rows.push(VectorPayloadInput {
+                                                item_id: chunk.id.to_string(),
+                                                vector_index: 1,
+                                                payload: VectorPayload::from_f32(&floats),
+                                                model_id: model_id_ref.clone(),
+                                                model_version: model_version_ref.clone(),
+                                                filed_at_unix_secs: filed_at_secs,
+                                            });
+                                        }
+                                    }
+                                    let done = embedded_ref.fetch_add(
+                                        batch.len(),
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    ) + batch.len();
+                                    if done / PROGRESS_STRIDE
+                                        > (done - batch.len()) / PROGRESS_STRIDE
+                                    {
+                                        eprintln!(
+                                            "[corpus] reindex: reembed {done}/{total_chunks} ({model_id_ref})"
+                                        );
+                                    }
+                                    out.push((i, rows));
+                                }
+                                Ok(out)
+                            },
+                        )
+                    })
+                    .collect();
+                // Reassemble by batch index → chunk order, independent of which
+                // worker embedded which batch. A worker panic surfaces as an
+                // error instead of aborting the join.
+                let mut all: Vec<Option<Vec<VectorPayloadInput>>> =
+                    (0..n_batches).map(|_| None).collect();
+                for h in handles {
+                    match h.join() {
+                        Ok(Ok(pairs)) => {
+                            for (i, rows) in pairs {
+                                all[i] = Some(rows);
+                            }
+                        }
+                        Ok(Err(e)) => return Err(e),
+                        Err(_) => {
+                            return Err(CorpusKitError::EmbeddingFailed(
+                                "re-embed worker thread panicked".into(),
+                            ))
+                        }
+                    }
+                }
+                all.into_iter()
+                    .enumerate()
+                    .map(|(i, slot)| {
+                        slot.ok_or_else(|| {
+                            CorpusKitError::EmbeddingFailed(format!(
+                                "re-embed batch {i} was never produced (worker exited early)"
+                            ))
+                        })
+                    })
+                    .collect()
+            },
+        )?;
+        drop(guard);
+
+        // Phase 2 (SERIAL — single-writer): clear the model's ENTIRE vector set in
+        // ONE bulk pass — one DB delete + one O(n) resident-array sweep — then add
+        // the freshly-embedded batch under a single transaction. The old per-chunk
+        // delete_all_vectors scanned the whole resident array on EVERY chunk, so
+        // re-embedding a corpus was O(n²) (the dominant cost of a large reindex);
+        // clearing the whole model once is O(n). A full clear + re-add also ends
+        // each chunk with exactly the new vectors (no stale rows from a prior basis
+        // in either lane), preserving the delete-first invariant.
+        let batch: Vec<VectorPayloadInput> = batch_rows.into_iter().flatten().collect();
         self.vector_store
-            .add_payloads(&batch)
+            .replace_model_vectors(&model_id, &batch)
             .map_err(|e| CorpusKitError::StoreUnavailable(format!("{:?}", e)))?;
         Ok(())
     }
