@@ -40,7 +40,7 @@ sources:
   - path: Sources/VectorKit/VectorMatch.swift
     blob: 24cc2c1bd25f71a7cef60a043c3a640df2368a23
   - path: Sources/VectorKit/VectorStore.swift
-    blob: 3c7fe4a19eba1142ac82a993cee0e7660a4ffdce
+    blob: 45a4a6290398c27b383bc06ac5999cfaa0ca3422
 ---
 
 # VectorKit Details
@@ -659,6 +659,30 @@ an unpublished bulk import. `destroyAllVectors()` wipes the entire
 store: every row, both resident indexes, the sidecar, and the per-model
 float indexes. This runs as part of a coordinated estate teardown. An
 estate is one user's complete memory store in MOOTx01.
+
+### Batch reindex path
+
+`replaceModelVectors(modelID:_:)` replaces an entire model's vectors in
+one re-embed pass. It exists apart from `addPayloads` and
+`deleteAllVectors`, which live captures keep using unchanged. Those two
+paths mutate the resident index one key at a time. Every add or remove
+on `BruteForceIndex` rebuilds every partition. That cost is fine for the
+small, frequent writes those two paths serve. It is not fine for a full
+re-embed of tens of thousands of rows, an operation that would cost
+`O(n²)` through that path. `replaceModelVectors` instead deletes and
+inserts the whole model inside one durable-table transaction. This is
+one fsync for the whole batch, not one per row. The bulk delete runs
+first, so the following inserts never conflict, and each insert skips
+the usual per-row existence check. After the transaction commits, the
+resident binary index is rebuilt once, by the private
+`_rebuildBinaryIndexFromTable()`. This function does not trust the
+sidecar's live-count check that `_ensureIndexBuilt()` uses elsewhere. A
+re-embed can replace every vector while the row count for the model
+stays the same. A live-count match in that case would wrongly keep a
+now-stale sidecar. `_rebuildBinaryIndexFromTable()` always rereads the
+table instead, so this case cannot fool it. The rebuild also drops the
+model's Lane D float index, so the next float search for that model
+rebuilds it from the fresh rows.
 
 ### Coherence helpers
 

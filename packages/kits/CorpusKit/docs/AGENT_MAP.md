@@ -16,9 +16,9 @@ sources:
   - path: Sources/CorpusKit/Chunker.swift
     blob: a2718e06d1715f539ff633e7037c70e10ecb7a2d
   - path: Sources/CorpusKit/CorpusIngestQueue.swift
-    blob: 2c32133701ce728bc017d4ddad51b052cae990db
+    blob: 4dd3bd8eefb8e0e7dd474793d35acbe03b452df3
   - path: Sources/CorpusKit/CorpusKit.swift
-    blob: 4518f15fdb798c3a203c4a9db949f4d6172f540d
+    blob: bd4433bb5a7dc347df5e24c04d5f76a533261e54
   - path: Sources/CorpusKit/CorpusKitError.swift
     blob: 68ac8d0a248bc9c2dd1885b0bc531ac4ed9cb91d
   - path: Sources/CorpusKit/CorpusProviderCountsStore.swift
@@ -30,7 +30,7 @@ sources:
   - path: Sources/CorpusKit/Engine/InvertedIndex.swift
     blob: 1273adcb3794b1997c93488182fc5ed95b21f9ec
   - path: Sources/CorpusKit/Engine/InvertedIndexStore.swift
-    blob: 242baf05e5c846c719c403599a9a407bba646f5b
+    blob: 14f9de0b8e7ce0eae638605f24e43493afa0ac4e
   - path: Sources/CorpusKit/Engine/SparseTypes.swift
     blob: 54654e2c49b09d31f60c06503216a2b281939f87
   - path: Sources/CorpusKit/HybridRecall.swift
@@ -82,47 +82,55 @@ PURPOSE: standalone on-device RAG kit. Text → chunks (content-addressed UUID) 
 DEPS: CorpusKit imports SubstrateTypes, SubstrateLib (MerkleHash), SubstrateML, EngramLib, EideticLib (sentence segmentation), IntellectusLib (telemetry, off-by-default), PersistenceKit (+InMemory, +SQLite), ConvergenceKit (manifest only), VectorKit, QueueKit, Crypto. CorpusKitProviders additionally imports SubstrateKernel (FloatVecOps), LatticeLib (FDC runtime; FDC math NOT reimplemented). Imported by: GeniusLocusKit (orchestrator tier). Rust ports: `rust/` (core, crate corpus-kit) + `rust-providers/` (crate corpus-kit-providers); shared fixtures `Tests/SharedVectors/*.json` read by BOTH legs gate bit-identity. NL providers are Swift-only (ADR-019, no Rust twin).
 
 ENTRY POINTS (most callers need only these):
-- CorpusKit.swift:702 `Corpus.init(storage:models:)` : open estate corpus; `models[0]` = default signal (:674 single-model convenience)
-- CorpusKit.swift:1001 `Corpus.ingest(_ text:sourceID:now:)` : synchronous chunk+index+embed
-- CorpusIngestQueue.swift:157 `Corpus.enqueueIngest(_:sourceID:now:)` : async queued ingest (production path)
-- CorpusKit.swift:1629 `Corpus.recall(_ query:limit:now:) -> [ScoredChunk]` : hybrid RRF recall on default signal
+- CorpusKit.swift:725 `Corpus.init(storage:models:)` : open estate corpus; `models[0]` = default signal (:697 single-model convenience)
+- CorpusKit.swift:1026 `Corpus.ingest(_ text:sourceID:now:)` : synchronous chunk+index+embed
+- CorpusIngestQueue.swift:184 `Corpus.enqueueIngest(_:sourceID:now:)` : async queued ingest, "encode" stream (production path)
+- CorpusIngestQueue.swift:230 `Corpus.enqueueIngestBatchImport(_:)` : async queued BULK import, "import" stream (chunk+BM25 only; caller reindexes once at the end)
+- CorpusKit.swift:1990 `Corpus.recall(_ query:limit:now:) -> [ScoredChunk]` : hybrid RRF recall on default signal
 - DefaultEnsemble.swift:62 `CorpusEnsemble.defaultEnsemble() -> [EmbeddingModel]` : the five production signals, fresh per estate
 
 ## Symbol Table
 
 ### Facade : CorpusKit.swift
-- :48 `enum FloatLaneOutcome` : `.hits`/`.unavailableProviderOptOut`/`.unavailableNoVocabHit`/`.unavailableNoFloatRows`/`.emptyQuery`/`.storeError`; dark lanes are typed outcomes, NEVER errors
-- :134 `enum EmbeddingModel` : `.deterministic` (:147, seed 0xC05B_D15C_A15D_1B00, federation baseline), `.miniLM/.mpNet/.embeddingGemma(inference:)` (:157/:167/:177, host closure), `.randomIndexing/.ppmi/.lsa/.nmf(provider:)` (:194–:233, trainable), `.fdc(provider:)` (:254, stateless), `.nlEmbedding/.nlContextualEmbedding` (:275/:293, Apple-only); `.default = .deterministic` (:297)
-- :338 `EmbeddingModel.isTrainable` : true iff carried provider conforms to TrainableEmbeddingBasis
-- :362 `EmbeddingModel.reconstruct(from: Data)` : routes blob to concrete type; throws `.notTrainable`
-- :417 `enum EncodeSpeed` : `.foreground` (all cores) / `.background` (cores/4, floor 1)
-- :426 `public actor Corpus` : composition root; sealed-vector principle (no VectorKit type in public API except :649 `sharedVectorStore`)
-- :491 `setEncodeSpeed(_:)`; :641 `onEncoded` callback (set via CorpusIngestQueue.swift:134 `setOnEncoded`)
-- :1001 `ingest(_:sourceID:now:)` : idempotent; re-ingest clears tombstone; first-ingest auto-train (gate = no persisted basis, NOT factory-blob presence)
-- :1181 `ingestBatch(_:)` : identical output to per-item; commit windows 512 items / 4096 rows (:436–:437); slice-parallel embed; batch-aware first-basis bootstrap (train once on full batch, never per item)
-- :1416 `maintainedVocabAnchor() -> Int` : governor's vocab-growth retrain trigger read
-- :1488 `reindex(now:)` : THE explicit retrain: reconstruct-fresh → trainOnCorpus(active chunks) → upsert basis → re-embed all under every slot; excludes removed sources
-- :1629 `recall(_:limit:now:)`; :1657 `remove(sourceID:)` (BM25 rows + ALL models' vectors + tombstone; chunks kept); :1711 `expunge(sourceID:)` (scrubText FIRST, then remove); :1738 `destroyRecallIndex()` (all derived state; chunks survive)
-- :1779 `bm25TopKBySource(query:limit:)` : pure keyword lane, max-chunk-score per source, frontierK ≤ 256
-- :1833 `embed(_:) -> Engram`; :1846 `modelID`; :1863 `embedFloat(_:)` (throws on provider opt-out); :2238 `supportsFloat`
-- :1895 `floatNearest(query:limit:) -> FloatLaneOutcome` : never throws; sim = 1 − distance/10_000; source aggregation = MAX chunk cosine
-- :2141 `floatNearestPerSignal(query:limit:)` : per-slot dense lanes in slot order, NO fusion (caller fuses); :2214 `floatFarthestPerSignal` : anti-similarity, MIN chunk cosine per source, ascending
-- :2249 `count()` (excludes removed sources); :2266 `indexedSourceIDs()`; :2274/:2280 `corpusMerkleRoot(for:)`/`globalCorpusMerkleRoot()`
-- :2300 `EmbeddingModel.makeProvider()` (private) : pinned seeds: miniLM 0x4D49_4E4C_4D5F_7631 "MINLM_v1", mpNet 0x4D50_4E45_545F_7631 "MPNET_v1", embeddingGemma 0x454D_4247_4D5F_7631 "EMBGM_v1"; model IDs corpus-deterministic-v1 / minilm-v6 / mpnet-base-v2 / embedding-gemma-300m
-- :2413 `CorpusDefaultTokenizer` (internal) : FNV-1a fold, duplicated from providers to avoid circular dep; :2445 `CorpusTextProvider` (private) : tokenize→inference→FloatSimHash; :2498 `embedPair` computes pooled vector ONCE for both lanes
-- Test seams (never production): :914 init(storage:provider:), :980 `_testForceFloatStoreError`, :656 `_ingestFailureHook`
+- :50 `enum FloatLaneOutcome` : `.hits`/`.unavailableProviderOptOut`/`.unavailableNoVocabHit`/`.unavailableNoFloatRows`/`.emptyQuery`/`.storeError`; dark lanes are typed outcomes, NEVER errors
+- :136 `enum EmbeddingModel` : `.deterministic` (:149, seed 0xC05B_D15C_A15D_1B00, federation baseline), `.miniLM/.mpNet/.embeddingGemma(inference:)` (:159/:169/:179, host closure), `.randomIndexing/.ppmi/.lsa/.nmf(provider:)` (:196–:235, trainable), `.fdc(provider:)` (:256, stateless), `.nlEmbedding/.nlContextualEmbedding` (:277/:295, Apple-only); `.default = .deterministic` (:299)
+- :340 `EmbeddingModel.isTrainable` : true iff carried provider conforms to TrainableEmbeddingBasis
+- :364 `EmbeddingModel.reconstruct(from: Data)` : routes blob to concrete type; throws `.notTrainable`
+- :419 `enum EncodeSpeed` : `.foreground` (all cores) / `.background` (cores/4, floor 1)
+- :428 `public actor Corpus` : composition root; sealed-vector principle (no VectorKit type in public API except :672 `sharedVectorStore`)
+- :493 `setEncodeSpeed(_:)`; :664 `onEncoded` callback (set via CorpusIngestQueue.swift:161 `setOnEncoded`)
+- :622/:630 `ingestDrainWorker`/`drainLease` (encode stream); :638/:641/:651 `importDrainWorker`/`importDrainLease`/`importQueue` (discrete bulk-import stream, own DrainLease, own QueueKit facade over its own connection on SQLite estates; nil on in-memory estates, where the import worker shares `ingestQueue`)
+- :1026 `ingest(_:sourceID:now:)` : idempotent; re-ingest clears tombstone; first-ingest auto-train (gate = no persisted basis, NOT factory-blob presence)
+- :1432 `ingestBatch(_:)` : identical output to per-item; commit windows 512 items / 4096 rows (:438); slice-parallel embed; batch-aware first-basis bootstrap (train once on full batch, never per item)
+- :1200 `ingestBatchImport(_:)` : DISCRETE bulk-import path used by the import drain worker; chunk + bundle + BM25 + source-map + counts fold ONLY, NO train, NO embed; SQLite estates take :1224 `ingestBatchImportSharded` (EXT-4: per-core shard files chunk+tokenize+write BM25 postings off the actor, one writer bundles rows and merges shards via `SQLiteStorage.mergeShard`, :1221 `importShardItems = 2500` items per shard); non-SQLite estates take :1382 `ingestBatchImportSerial` (same steps, one item at a time on the actor)
+- :1667 `maintainedVocabAnchor() -> Int` : governor's vocab-growth retrain trigger read
+- :1739 `reindex(now:)` : THE explicit retrain, now two phases. Phase 1 (:1846 `trainAndPersistBasis` inlined as a concurrent task group): every trainable slot reconstructs fresh and trains CONCURRENTLY, then installs + persists serially; Phase 2 (:1887 `reembedChunks`): re-embeds each slot's chunks, with the embed compute itself fanned across bounded batches (3000 chunks each) and the old per-chunk delete replaced by one bulk `vectorStore.replaceModelVectors(modelID:)` clear-then-add; excludes removed sources; logs phase progress since a large reindex runs minutes
+- :1990 `recall(_:limit:now:)`; :2018 `remove(sourceID:)` (BM25 rows + ALL models' vectors + tombstone; chunks kept); :2072 `expunge(sourceID:)` (scrubText FIRST, then remove); :2099 `destroyRecallIndex()` (all derived state; chunks survive)
+- :2140 `bm25TopKBySource(query:limit:)` : pure keyword lane, max-chunk-score per source, frontierK ≤ 256
+- :2194 `embed(_:) -> Engram`; :2207 `modelID`; :2224 `embedFloat(_:)` (throws on provider opt-out); :2599 `supportsFloat`
+- :2256 `floatNearest(query:limit:) -> FloatLaneOutcome` : never throws; sim = 1 − distance/10_000; source aggregation = MAX chunk cosine
+- :2502 `floatNearestPerSignal(query:limit:)` : per-slot dense lanes in slot order, NO fusion (caller fuses); :2575 `floatFarthestPerSignal` : anti-similarity, MIN chunk cosine per source, ascending
+- :2610 `count()` (excludes removed sources); :2627 `indexedSourceIDs()`; :2635/:2641 `corpusMerkleRoot(for:)`/`globalCorpusMerkleRoot()`
+- :2661 `EmbeddingModel.makeProvider()` (private) : pinned seeds: miniLM 0x4D49_4E4C_4D5F_7631 "MINLM_v1", mpNet 0x4D50_4E45_545F_7631 "MPNET_v1", embeddingGemma 0x454D_4247_4D5F_7631 "EMBGM_v1"; model IDs corpus-deterministic-v1 / minilm-v6 / mpnet-base-v2 / embedding-gemma-300m
+- :2774 `CorpusDefaultTokenizer` (internal) : FNV-1a fold, duplicated from providers to avoid circular dep; :2806 `CorpusTextProvider` (private) : tokenize→inference→FloatSimHash; :2859 `embedPair` computes pooled vector ONCE for both lanes
+- :2869 `extension BackendConfiguration`; :2874 `sqliteURLForShards` : SQLite URL for import-shard placement beside the estate; nil for non-SQLite backends (takes the serial import path)
+- Test seams (never production): :939 init(storage:provider:), :1005 `_testForceFloatStoreError`, :679 `_ingestFailureHook`
 
 ### Ingest queue : CorpusIngestQueue.swift (extension Corpus)
-- :63 `mountIngestQueue()` : idempotent; SQLite estate → encrypted sibling `queue.sqlite` via `EstateConfiguration.queueSibling` (ADR-021 D7/T4; replaced plaintext maildir hole); InMemory estate → fixed :486 `ingestQueueStoreID` (no UUID() nondeterminism)
-- :120 `dropIngestQueue()`; :134 `setOnEncoded(_:)` : the ONLY CorpusKit→orchestrator callback
-- :157 `enqueueIngest(...)`; :179 `enqueueIngestBatch(...)` : one transaction for all jobs (bulk-import bottleneck fix; caller bounds batch size)
-- :205 `awaitIngestDrain(timeout: 30s)` : barrier: drained AND vector index republished; throws drainTimeout
-- :229 `ingestQueueDepth() -> (pending, inFlight)` : pending IS stream-scoped, inFlight is NOT (all streams)
-- :248 `drainIngestQueueOnce()` : claims whole batch; undecodable → `.blocked` (terminal), empty text → `.done`; batch `ingestBatch` + bulk session reply; falls back serial on batch throw
-- :341 `runIngestDrainLoop` (private) : DrainLease single drainer; first-acquire crash recovery `reclaimInFlight`; standby poll 3 s; lease TTL 15 s (failover ≈ 15–18 s, not instant); spin-while-draining, 15 ms idle sleep; vector index published once per burst (O(N) not O(N²))
-- :430 `ingestOneAndReply` (private) : retry in place ≤ :476 `ingestMaxAttempts = 8`, then `.blocked`; sound ONLY because ingest is idempotent
-- :480 `encodeStreamID = "encode"` : EVERY queue op must be scoped to it (shared queue.sqlite may carry other streams; unscoped awaitDrain deadlocks)
-- :515 `IngestJob` : wire fields `sourceID`/`text`/`capturedAtISO8601` = pinned cross-port JSON contract; :551 `toJob`, :563 `from(job:)`
+- :63 `mountIngestQueue()` : idempotent; SQLite estate → encrypted sibling `queue.sqlite` via `EstateConfiguration.queueSibling` (ADR-021 D7/T4; replaced plaintext maildir hole); InMemory estate → fixed :698 `ingestQueueStoreID` (no UUID() nondeterminism). Also mounts a SECOND drain worker for the `"import"` stream, with its own `DrainLease` and, on SQLite estates, its own `QueueKit` connection (`importQueue`); in-memory estates share `ingestQueue` for the import worker too
+- :142 `dropIngestQueue()` : cancels BOTH drain workers and releases BOTH leases; :161 `setOnEncoded(_:)` : the ONLY CorpusKit→orchestrator callback
+- :184 `enqueueIngest(...)`; :206 `enqueueIngestBatch(...)` : one transaction for all jobs (bulk-import bottleneck fix; caller bounds batch size); "encode" stream, daily-driving captures
+- :230 `enqueueIngestBatchImport(...)` : same durable `queue.sqlite`, "import" stream; claimed only by the import drain worker, chunk+BM25 only (no embed/train per item)
+- :257 `awaitIngestDrain(timeout: 30s)` : barrier scoped to the "encode" stream: drained AND vector index republished; throws drainTimeout
+- :281 `ingestQueueDepth() -> (pending, inFlight)` : BOTH fields now stream-scoped to "encode" (fixed; inFlight used to count all streams, which let a concurrent import inflate the encode probe)
+- :298 `importQueueDepth() -> (pending, inFlight)` : the "import"-stream twin of `ingestQueueDepth`; both zero means every enqueued import job has been chunk+BM25-ingested and replied
+- :317 `drainIngestQueueOnce()` : claims whole "encode" batch; undecodable → `.blocked` (terminal), empty text → `.done`; batch `ingestBatch` + bulk session reply; falls back serial on batch throw
+- :410 `runIngestDrainLoop` (private) : DrainLease single drainer for "encode"; first-acquire crash recovery `reclaimInFlight`; standby poll 3 s; lease TTL 15 s (failover ≈ 15–18 s, not instant); spin-while-draining, 15 ms idle sleep; vector index published once per burst (O(N) not O(N²))
+- :499 `ingestOneAndReply` (private) : retry in place ≤ :683 `ingestMaxAttempts = 8`, then `.blocked`; sound ONLY because ingest is idempotent
+- :538 `drainImportQueueOnce()` : the "import"-stream twin of `drainIngestQueueOnce`; claims through `importQueue` (falls back to `ingestQueue` on in-memory estates); batch `ingestBatchImport` + bulk session reply; falls back to :645 `ingestOneImportAndReply` per job on batch throw; NO `onEncoded` callback (per-batch rollups deferred to the import cycle's tail)
+- :596 `runImportDrainLoop` (private) : the "import" twin of `runIngestDrainLoop`; own lease, own on-mount `reclaimInFlight`, same poll/TTL/idle-sleep constants; NO vector-index publish step (the import drain writes no vectors, `reindex` does that once at the import tail)
+- :687 `encodeStreamID = "encode"`; :692 `importStreamID = "import"` : EVERY queue op must be scoped to one or the other (shared queue.sqlite carries both streams; an unscoped op deadlocks or double-counts)
+- :727 `IngestJob` : wire fields `sourceID`/`text`/`capturedAtISO8601` = pinned cross-port JSON contract, shared by both streams; :763 `toJob(streamID:...)`, :775 `from(job:)`
 
 ### Chunks : Chunk.swift / Chunker.swift
 - Chunk.swift:35 `struct Chunk: Sendable, Equatable, Codable` : immutable, content-addressed
@@ -168,7 +176,7 @@ ENTRY POINTS (most callers need only these):
 
 ### Persistent keyword index : Engine/InvertedIndexStore.swift
 - :47 `public actor InvertedIndexStore`; :55 schemaDeclaration (kitID "InvertedIndexStore", tables iix_termfreqs/iix_doclens : RAW statistics only, weighted index derived+cached, so k1/b changes need no migration); :105 init (storage pre-opened/migrated); :114 `open()` (load mirrors, O(terms+docs), no chunk bodies)
-- :159 `index(itemID:tokens:now:)` : atomic replace, idempotent; empty tokens = removal; `now` unused (determinism discipline); :199 `remove(itemID:)`; :230 `buildIndex(parameters:)` (cached; invalidated per write); :253 `topK(queryTerms:k:parameters:algorithm:)`; :273 `deleteAll()`; :295 `documentCount`
+- :159 `index(itemID:tokens:now:)` : atomic replace, idempotent; empty tokens = removal; `now` unused (determinism discipline); :203 `foldPostings(_:)` : the EXT-4 sharded-import twin of `index`, folds worker-computed `(itemID, tf, docLen)` triples straight into the in-memory maps (nothing re-read from disk), idempotent under queue retry, invalidates the cached BM25 build once per batch; :216 `remove(itemID:)`; :247 `buildIndex(parameters:)` (cached; invalidated per write); :270 `topK(queryTerms:k:parameters:algorithm:)`; :290 `deleteAll()`; :312 `documentCount`
 - Rust twin owns a PRIVATE connection with begin/commit/rollback_batch; Swift shares estate storage : hence Corpus-managed transaction windows in ingestBatch
 
 ### Legacy keyword index : BM25Index.swift
@@ -227,13 +235,13 @@ ENTRY POINTS (most callers need only these):
 
 - DETERMINISM DISCIPLINE: engines never read `Date()`/`UUID()`; `now` is always caller-supplied. Sanctioned exceptions: RemovedSourceStore audit stamp, telemetry timestamps. Training is a pure function of (texts, pinned seeds).
 - UNIVERSAL JOIN KEY: chunk.id.uuidString == VectorKit item_id == inverted-index item_id. Swift canonical uuidString is UPPERCASE; HybridRecall re-canonicalizes vector-lane ids (P3-secfix). Universal tie-break everywhere: score DESC, then id ASC ("smaller id wins").
-- PINNED CONSTANTS (change = new conformance vectors + possible fleet re-key): chunker 800/100; BM25 k1 1.5 / b 0.75; QUANT_SCALE 100 with round-HALF-TO-EVEN; BMW block 128; RRF k 60, weights 0.6/0.4; candidate over-fetch max(limit×4, 32); float-lane sim quantization ×10_000; commit windows 512/4096; ingestMaxAttempts 8; idle drain sleep 15 ms; lease TTL 15 s / standby poll 3 s; RI/PPMI D 2048 K 10 window 4; LSA rank 64 sweeps 30; NMF rank 32 iterations 100 tolerance 0 factorization seed 0xDEADBEEFCAFEBABE; reduced-vocab cap 512; Chunk.namespaceBytes; basisFormatVersion 1.
+- PINNED CONSTANTS (change = new conformance vectors + possible fleet re-key): chunker 800/100; BM25 k1 1.5 / b 0.75; QUANT_SCALE 100 with round-HALF-TO-EVEN; BMW block 128; RRF k 60, weights 0.6/0.4; candidate over-fetch max(limit×4, 32); float-lane sim quantization ×10_000; commit windows 512/4096; ingestMaxAttempts 8; idle drain sleep 15 ms; lease TTL 15 s / standby poll 3 s; RI/PPMI D 2048 K 10 window 4; LSA rank 64 sweeps 30; NMF rank 32 iterations 100 tolerance 0 factorization seed 0xDEADBEEFCAFEBABE; reduced-vocab cap 512; Chunk.namespaceBytes; basisFormatVersion 1; importShardItems 2500; reindex reembed batch 3000; reembed progress log stride 5000 (these last three are throughput knobs, not conformance-pinned).
 - PROJECTION SEEDS partition vector storage by model and must be unique + frozen: deterministic 0xC05B_D15C_A15D_1B00, MINLM_v1, MPNET_v1, EMBGM_v1, RI_V1_MX, PPMI_V1M, LSA_V1_M, NMF_V1_M, FDC_V1_P, APNLEMB1, APNLCTX1. All projection goes through SubstrateML.FloatSimHash : ad-hoc projections are banned from the kit graph.
-- ONLY TWO TRAIN TRIGGERS: first-ingest auto-train (gate = no persisted basis) and explicit `reindex(now:)`. trainOnCorpus is ADDITIVE : always reconstruct fresh from the slot's freshBasisBlob before retraining; growth-threshold auto-retrain is future policy (anchors persisted, path unwired : "HALF A").
+- ONLY TWO TRAIN TRIGGERS: first-ingest auto-train (gate = no persisted basis) and explicit `reindex(now:)`. `ingestBatchImport` adds no third trigger : it only chunks and BM25-indexes, and the caller is expected to run one `reindex(now:)` after the whole import completes. trainOnCorpus is ADDITIVE : always reconstruct fresh from the slot's freshBasisBlob before retraining; growth-threshold auto-retrain is future policy (anchors persisted, path unwired : "HALF A"). `reindex` now trains every trainable slot CONCURRENTLY (one task group) before installing and persisting each result serially; per-slot output stays byte-identical to the old serial loop.
 - TOMBSTONE CONSULTATION IS UNENFORCED: every chunk-replay path (reindex, first-ingest train, count, any future rebuild) MUST subtract RemovedSourceStore.removedIDs() or removed sources resurrect on the governor's auto-reindex.
 - BundleStore.insert returns ONLY newly-inserted chunks; fold derived state over the returned subset. count(asOf:) ignores asOf.
 - DUAL TypedValue DECODE (BundleStore, BasisStore): SQLite round-trips UUID/HLC/timestamp as primitives, InMemory keeps semantic forms; decoders must accept both; InMemory-only tests cannot catch the regression (proven bug class: silent total data loss on reopen).
-- STREAM SCOPING: every queue op in CorpusIngestQueue uses stream "encode"; the shared queue.sqlite may carry other streams; an unscoped awaitDrain deadlocks. IngestJob JSON field names are a frozen cross-port wire contract.
+- STREAM SCOPING: CorpusIngestQueue now runs TWO streams on one `queue.sqlite`, "encode" (daily-driving, `enqueueIngest`/`enqueueIngestBatch`) and "import" (discrete bulk import, `enqueueIngestBatchImport`); every queue op must scope to the right one, or an unscoped op deadlocks (`awaitIngestDrain`) or double-counts (`ingestQueueDepth`/`importQueueDepth`, both now correctly stream-scoped on both fields). Each stream has its own DrainLease and its own drain worker. IngestJob JSON field names are a frozen cross-port wire contract shared by both streams.
 - appendOnly means two different things: sync conflict policy (SyncManifest, `.appendOnly`, safe via content addressing) vs BundleStore schema flag (`appendOnly: false`, required so scrubText can UPDATE). Do not conflate.
 - Chunks are immutable BY CONVENTION (no update API), not by DB trigger; edit = delete + reinsert with new id; metadata is the only legal per-chunk side-data slot (doctrine §2).
 - keywordTokens override breaks the single-tokenizer guarantee shared by BM25 + distributional providers (convention, not compiler-enforced).

@@ -98,7 +98,7 @@ sources:
   - path: Sources/LocusKit/Summaries.swift
     blob: fa624f6b00d8bf40f1ccc02821e3e2b94bf94f6e
   - path: Sources/LocusKit/Tunnel.swift
-    blob: 8da22988147aab0a9451f06ec681d10891da1e95
+    blob: 8b1590668c930fb0e03eb2e89d2c31cd3d66c34b
   - path: Sources/LocusKit/TunnelOperational.swift
     blob: a5b9b8d3b5b7990ebcb9d9c6209564a7307aa13e
 ---
@@ -322,10 +322,11 @@ ENTRY POINTS (most callers need only these):
 - :654 `sort(_:ordering:nodeNames:)` (private)
 
 ### Tunnel : Tunnel.swift
-- :24 `struct Tunnel: Equatable, Hashable, Codable, Sendable`
-- :29 `id` (conventionally SHA-256 of canonicalised endpoint pair : NOT enforced at this layer, LOCI-5)
+- :25 `struct Tunnel: Equatable, Hashable, Codable, Sendable`
+- :30 `id` (conventionally SHA-256 of canonicalised endpoint pair : NOT enforced at this layer, LOCI-5)
 - source/target: wing+room+optional drawerId (nil = "the room itself")
-- :63 `kind: TunnelKind` (default .references) / :69/:75/:80 adjective/operational/provenance bitmaps / :99 `orderKey: Double?` (fractional-index sibling order, .parent kind only)
+- :64 `kind: TunnelKind` (default .references) / :70/:76/:81 adjective/operational/provenance bitmaps / :100 `orderKey: Double?` (fractional-index sibling order, .parent kind only)
+- :153 `adjectiveSensitivity: AdjectiveSensitivity` (extension, imports SubstrateKernel for BitField) : bits 6-11 of adjectiveBitmap, fallback .normal; parity peer of Rust Tunnel::adjective_sensitivity
 
 ### Tunnel operational : TunnelOperational.swift
 - :38 `enum TunnelKind: Int` : supersedes=0…parent=9 (outline containment, ADR-017 §11; source=child, target=parent, one-parent-per-child kit-level constraint)

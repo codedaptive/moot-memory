@@ -16,9 +16,9 @@ sources:
   - path: Sources/CorpusKit/Chunker.swift
     blob: a2718e06d1715f539ff633e7037c70e10ecb7a2d
   - path: Sources/CorpusKit/CorpusIngestQueue.swift
-    blob: 2c32133701ce728bc017d4ddad51b052cae990db
+    blob: 4dd3bd8eefb8e0e7dd474793d35acbe03b452df3
   - path: Sources/CorpusKit/CorpusKit.swift
-    blob: 4518f15fdb798c3a203c4a9db949f4d6172f540d
+    blob: bd4433bb5a7dc347df5e24c04d5f76a533261e54
   - path: Sources/CorpusKit/CorpusKitError.swift
     blob: 68ac8d0a248bc9c2dd1885b0bc531ac4ed9cb91d
   - path: Sources/CorpusKit/CorpusProviderCountsStore.swift
@@ -30,7 +30,7 @@ sources:
   - path: Sources/CorpusKit/Engine/InvertedIndex.swift
     blob: 1273adcb3794b1997c93488182fc5ed95b21f9ec
   - path: Sources/CorpusKit/Engine/InvertedIndexStore.swift
-    blob: 242baf05e5c846c719c403599a9a407bba646f5b
+    blob: 14f9de0b8e7ce0eae638605f24e43493afa0ac4e
   - path: Sources/CorpusKit/Engine/SparseTypes.swift
     blob: 54654e2c49b09d31f60c06503216a2b281939f87
   - path: Sources/CorpusKit/HybridRecall.swift
@@ -364,9 +364,15 @@ only requires an in-memory rebuild. `open()` loads all rows once, at a
 cost proportional to terms plus documents, never to chunk text.
 
 `index(itemID:tokens:now:)` replaces a document's terms atomically, and
-it is idempotent. Empty tokens remove the item. `remove(itemID:)` and
-`deleteAll()` complete the mutation surface. `topK(queryTerms:k:parameters:algorithm:)`
-is the one-call query path. The actor serializes all mutation. The Rust
+it is idempotent. Empty tokens remove the item. `foldPostings(_:)` is a
+second write path for a bulk import. A sharded import worker computes
+term frequencies and document lengths off the actor, in parallel. This
+method then folds those already-computed rows straight into the same
+in-memory maps `index` writes. Nothing gets re-read from disk. A
+re-delivered item just overwrites its prior entry, so retries under the
+import queue stay safe. `remove(itemID:)` and `deleteAll()` complete the
+mutation surface. `topK(queryTerms:k:parameters:algorithm:)` is the
+one-call query path. The actor serializes all mutation. The Rust
 twin owns a private database connection with explicit batch methods.
 The Swift store instead shares the estate's storage, which is why the
 facade manages transaction windows around it during bulk ingest.
@@ -545,12 +551,35 @@ commits in windows of 512 items or 4,096 rows, long enough to amortize
 disk syncs and short enough not to starve concurrent captures. It also
 fans embedding work out in contiguous slices per core.
 
-`reindex(now:)` is the explicit retrain trigger. It performs five steps
-in order. It reconstructs fresh providers. It trains on all active
-chunks, excluding tombstoned sources. It installs the result. It
-persists the basis. It re-embeds each active chunk under each slot.
-Only two train triggers exist in the whole kit: first ingest, and
-explicit reindex.
+`ingestBatchImport(_:)` is a separate bulk-import path. The import
+drain worker calls it instead of `ingestBatch`. It chunks each item,
+bundles the chunks, and BM25-indexes them. It also folds counts. It
+never trains, and it never embeds. A SQLite estate takes a sharded
+route. Worker tasks chunk and tokenize their own slice off the actor.
+Each writes its BM25 postings into a private shard file. One writer
+then bundles the chunk rows as usual, merges each shard's postings with
+one attach and one sorted insert, and folds the postings into the
+in-memory index. A non-SQLite estate instead runs the same steps one
+item at a time, on the actor. Neither route trains a basis or writes a
+vector. The caller reindexes once, after the whole import completes, to
+do both.
+
+`reindex(now:)` is the explicit retrain trigger. It runs in two phases
+now, instead of one loop per slot. Phase one trains every trainable
+slot at once. Each slot reconstructs a fresh provider from its stored
+empty basis, and trains it on all active chunks, excluding tombstoned
+sources. That reconstruct-and-train step runs as a concurrent task per
+slot, since it is pure computation over a shared chunk snapshot. The
+actor then installs each trained provider, and persists its basis, one
+slot at a time. Phase two re-embeds every active chunk under every
+slot. The embed compute itself now fans out over bounded batches of
+three thousand chunks, run concurrently up to the embed concurrency
+cap. A single bulk clear-and-write then replaces that slot's whole
+vector set in one pass, rather than deleting and re-adding vectors one
+chunk at a time. The old per-chunk delete scanned every resident vector
+on every chunk, so a large reindex used to cost quadratic time. The
+bulk replace costs linear time instead. Only two train triggers exist
+in the whole kit: first ingest, and explicit reindex.
 
 ### Recall, Removal, Observation
 
@@ -599,10 +628,12 @@ both the engram and the float row.
 ## CorpusIngestQueue.swift
 
 This file holds the asynchronous ingest pipeline. It arrives as an
-extension on `Corpus`. Three pieces make up the pipeline: a durable
-queue, a background drain worker, and a single-drainer lease. It exists
-so CorpusKit is a complete standalone substrate. Any consumer gets
-queued, multi-core encoding with no orchestrator.
+extension on `Corpus`. The pipeline runs two parallel drain paths over
+one durable queue: a daily-driving encode path, and a discrete
+bulk-import path. Each path gets its own background drain worker and
+its own single-drainer lease. The file exists so CorpusKit is a
+complete standalone substrate. Any consumer gets queued, multi-core
+encoding with no orchestrator.
 
 `mountIngestQueue()` picks the backend by estate durability. A SQLite
 estate gets a sibling `queue.sqlite` file, derived deterministically
@@ -610,15 +641,22 @@ from the estate configuration. That file is encrypted with the same key
 as the estate. It replaces an earlier plaintext directory queue, which
 was a real security hole beside an encrypted estate. An in-memory estate
 gets a transient store instead, under a fixed constant UUID, which
-avoids random-id nondeterminism. Since the physical queue can
-carry other streams, each operation here is scoped to the `"encode"`
-stream. An unscoped wait would deadlock on jobs this drainer never
+avoids random-id nondeterminism. Since the physical queue can carry
+other streams, each operation here is scoped to one stream, `"encode"`
+or `"import"`. An unscoped wait would deadlock on jobs a drainer never
 claims.
 
-The drain loop coordinates through a `DrainLease`. Only one live drainer
-exists per estate, with crash recovery on first acquisition that resets
-orphaned in-flight jobs. That recovery is safe precisely since the
-lease guarantees no other live drainer holds them. A losing process
+The method mounts both drain workers at once. A SQLite estate opens a
+second connection for the import worker. Two live connections give each
+worker its own file-level arbitration under the database, rather than
+one shared connection whose transactions could collide. An in-memory
+estate has no real transactions to arbitrate, so the import worker
+there just shares the encode worker's queue facade.
+
+The encode drain loop coordinates through a `DrainLease`. Only one live
+drainer exists per estate, with crash recovery on first acquisition that
+resets orphaned in-flight jobs. That recovery is safe precisely since
+the lease guarantees no other live drainer holds them. A losing process
 becomes a warm standby instead. It re-checks each three seconds,
 bounded by the lease's fifteen-second staleness window. Each drain pass
 claims the whole available batch. It decodes jobs: undecodable ones are
@@ -632,14 +670,35 @@ milliseconds, the near-realtime latency floor. A failing item retries in
 place, up to eight attempts, before a terminal blocked reply. In-place
 retry is sound only since ingest is idempotent.
 
+The import drain loop is the discrete twin of the loop above. It claims
+only the `"import"` stream, and it holds its own lease, so the two loops
+run and fail over independently. Each pass hands its batch to
+`ingestBatchImport` instead of `ingestBatch`. That path chunks and
+BM25-indexes only. It never trains a basis, and it never embeds a
+vector. The import loop publishes no vector index of its own. A bulk
+import instead calls an explicit reindex once, at the very end, to train
+every trainable slot and embed every chunk. On a SQLite estate, the
+import path also shards its chunking and tokenizing work across cores,
+then merges the shards back through the estate's single writer.
+
 `enqueueIngest(_:sourceID:now:)` and `enqueueIngestBatch(_:)` stamp jobs
-with caller-supplied instants, never the wall clock. The batch variant
-wraps all inserts in one transaction, which removed the last full-core
+with caller-supplied instants, never the wall clock. Both write to the
+`"encode"` stream. `enqueueIngestBatchImport(_:)` is the bulk-import
+twin. It writes the same durable rows to the `"import"` stream instead,
+where only the import drain worker claims them. The batch variants each
+wrap all inserts in one transaction, which removed the last full-core
 bottleneck of bulk imports on encrypted SQLite.
+
 `awaitIngestDrain(timeout:)` is the barrier importers use to know writes
-are searchable. `setOnEncoded(_:)` installs the one callback CorpusKit
-ever makes toward an orchestrator. The `IngestJob` wire format's JSON
-field names form a pinned cross-port contract with the Rust twin.
+are searchable on the `"encode"` stream. `ingestQueueDepth()` reports
+pending and in-flight counts for that same stream. Both counts are now
+stream-scoped. The in-flight count once counted jobs across every
+stream, so a concurrent bulk import could inflate the number an encode
+caller read. `importQueueDepth()` is the same read, scoped to the
+`"import"` stream instead. `setOnEncoded(_:)` installs the one callback
+CorpusKit ever makes toward an orchestrator. The `IngestJob` wire
+format's JSON field names form a pinned cross-port contract with the
+Rust twin, shared by both streams.
 
 ## BasisCodec.swift
 

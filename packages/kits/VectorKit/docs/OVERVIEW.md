@@ -40,7 +40,7 @@ sources:
   - path: Sources/VectorKit/VectorMatch.swift
     blob: 24cc2c1bd25f71a7cef60a043c3a640df2368a23
   - path: Sources/VectorKit/VectorStore.swift
-    blob: 3c7fe4a19eba1142ac82a993cee0e7660a4ffdce
+    blob: 45a4a6290398c27b383bc06ac5999cfaa0ca3422
 ---
 
 # VectorKit Overview
@@ -127,6 +127,15 @@ per-model array instead. This mirroring means a later search never has
 to re-read the database. The in-memory array can optionally be backed
 by an on-disk cache file, called a sidecar. This lets the store reopen
 without rebuilding the array from every database row.
+
+A whole model can also be replaced in one batch. This path is
+`VectorStore.replaceModelVectors`. It deletes every vector for one model
+and inserts the fresh batch. It does this inside one transaction, so it
+costs one disk sync for the whole batch. It then rebuilds the in-memory
+array once, rather than once per vector. A model reindex changes every
+vector at once. Updating the in-memory array one vector at a time would
+be far slower for that case. This batch path keeps a full model
+re-embed fast.
 
 Searching has two independent paths, one per vector kind. A binary
 search, `findNearest`, compares the query fingerprint against the
