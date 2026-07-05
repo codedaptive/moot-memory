@@ -103,7 +103,7 @@ sources:
 
   <rect class="ext" x="40" y="435" width="180" height="55" rx="6"/>
   <text class="label" x="130" y="458" text-anchor="middle">AuditGate</text>
-  <text class="sub" x="130" y="474" text-anchor="middle">SubstrateLib — legal-transition</text>
+  <text class="sub" x="130" y="474" text-anchor="middle">SubstrateLib : legal-transition</text>
 
   <rect class="ext" x="260" y="435" width="180" height="55" rx="6"/>
   <text class="label" x="350" y="458" text-anchor="middle">PersistenceKit</text>

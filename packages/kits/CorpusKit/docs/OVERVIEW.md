@@ -79,124 +79,145 @@ sources:
 
 ## What This Kit Does
 
-CorpusKit stores text and finds it again by meaning as well as by keywords.
-It is the retrieval tier of MOOTx01, an on-device AI memory system. The
-technique it implements is called retrieval-augmented generation, or RAG. In
-RAG, an AI looks up relevant stored material before it answers, so its
-answers rest on real text instead of on guesswork.
+CorpusKit stores text. It finds that text again by meaning, and also by
+keyword. It is the retrieval tier of MOOTx01, an on-device AI memory
+system. The technique it uses has a name: retrieval-augmented generation,
+or RAG. In RAG, an AI looks up stored material first. Then it answers.
+The answer rests on real text, not on guesswork.
 
-A kit is a larger package that composes libraries into a subsystem. CorpusKit
-composes storage, indexing, and embedding libraries into one database-like
-surface. Callers hand it text; it splits the text into chunks, stores each
-chunk, and indexes it two ways. A chunk is a piece of source text with a
-stable identity, sized to a few sentences. Later, callers hand it a query and
-receive the most relevant chunks back, scored and ranked.
+A kit is a larger package. It composes libraries into one subsystem.
+CorpusKit composes storage, indexing, and embedding libraries. Together
+they form one database-like surface. Callers hand it text. The kit
+splits the text into chunks. It stores each chunk, then indexes it two
+ways. A chunk is a piece of source text with a stable identity. Each
+chunk is sized to a few sentences. Later, a caller hands the kit a
+query. The kit returns the most relevant chunks, scored and ranked.
 
-The kit stands alone. A developer can use it as a private RAG database with
-no other MOOT components. Inside MOOTx01, the GeniusLocusKit orchestrator
-uses it as the estate's recall engine. An estate is one user's complete
-memory store.
+The kit stands alone. A developer can use it as a private RAG database.
+No other MOOT component is required. Inside MOOTx01, the GeniusLocusKit
+orchestrator uses CorpusKit differently. It treats the kit as the
+estate's recall engine. An estate is one user's complete memory store.
 
 ## The Problem It Solves
 
-Recall must work on the device, deterministically, and without leaking text.
-Cloud embedding services see private content, need a network, and change
-without notice. If recall depended on them, a user's memory would be neither
-private nor reproducible. Federation raises the stakes: MOOTx01 estates can
-share memories across devices, and shared recall only works when every
-device computes the same result from the same input — the agreement
-property.
+Recall must work on the device. It must be deterministic. It must never
+leak text. Cloud embedding services fail all three tests. They see
+private content. They need a network connection. They change without
+notice. If recall depended on such a service, a user's memory would be
+neither private nor reproducible.
 
-CorpusKit answers with two ranked lanes that both run entirely on device. A
-lane is one independent way of scoring how well a chunk matches a query. The
-keyword lane uses BM25, a standard formula that rewards chunks containing
-the query's rarer words. The semantic lane uses embeddings. An embedding is
-a list of numbers (a vector) that represents what a text means; texts with
-similar meaning get nearby vectors. The two lanes are fused into one ranking
-by Reciprocal Rank Fusion, a simple rule that rewards chunks ranked high in
-either lane.
+Federation raises the stakes further. MOOTx01 estates can share memories
+across devices. Shared recall only works when every device computes the
+same result from the same input. Call this the agreement property.
 
-For the semantic lane, the kit ships an ensemble of five "honest" signals:
-Random Indexing, PPMI, LSA, NMF, and FDC. Honest means each signal reflects
-real word co-occurrence or real classification structure, never a disguised
-hash of the surface text. All five are classical statistical methods. They
-need no neural network, cost little, run identically on every platform, and
-are gated by shared conformance fixtures — recorded input and output pairs
-that the Swift leg and the Rust leg (in `rust/` and `rust-providers/`) must
-reproduce exactly, byte for byte. Optional higher-quality neural providers
-(MiniLM, mpnet, EmbeddingGemma, and two Apple NaturalLanguage providers)
-plug into the same seam when a host supplies the model.
+CorpusKit answers with two ranked lanes. Both run entirely on the
+device. A lane is one independent way to score how well a chunk matches
+a query. The keyword lane uses BM25. BM25 is a standard formula. It
+rewards chunks that contain the query's rarer words. The semantic lane
+uses embeddings instead. An embedding is a list of numbers, called a
+vector, that represents what a text means. Texts with similar meaning
+get nearby vectors. A rule called Reciprocal Rank Fusion then merges the
+two lanes into one ranking. The rule is simple: it rewards any chunk
+ranked high in either lane.
+
+For the semantic lane, the kit ships an ensemble of five signals. Each
+one is "honest." Honest means the signal reflects real word
+co-occurrence, or real classification structure. It is never a disguised
+hash of the surface text. The five signals are Random Indexing, PPMI,
+LSA, NMF, and FDC. All five are classical statistical methods. None
+needs a neural network. Each costs little to run. Each runs identically
+on every platform. Shared conformance fixtures gate all five: recorded
+input and output pairs that the Swift leg and the Rust leg must
+reproduce exactly, byte for byte. The Rust leg lives in `rust/` and
+`rust-providers/`. Optional neural providers plug into the same seam
+when a host supplies a model. Four ship today: MiniLM, mpnet,
+EmbeddingGemma, and two Apple NaturalLanguage providers.
 
 ## How It Works
 
-Ingestion runs in a pipeline. Text enters through an ingest queue backed by
-QueueKit, so callers never wait on encoding. A background drain worker takes
-batches from the queue and hands them to the `Corpus` actor, the kit's
-central type. The `Corpus` splits each text into chunks with sentence-aware
-boundaries. Each chunk receives a content-addressed identity: its UUID is
-computed from its source, offset, and exact text. The same content always
-produces the same identity, so re-ingesting a document is a harmless no-op
-and two federated devices converge on identical rows.
+Ingestion runs as a pipeline. Text enters through an ingest queue backed
+by QueueKit. Callers never wait on encoding to finish. A background
+drain worker takes batches from the queue. It hands each batch to the
+`Corpus` actor, the kit's central type. The `Corpus` splits each text
+into chunks with sentence-aware boundaries. Each chunk then receives a
+content-addressed identity. Its UUID is computed from its source, its
+offset, and its exact text. The same content always produces the same
+identity. A repeat ingest of one document is therefore a harmless
+no-op. Two federated devices that ingest the same content converge on
+identical rows.
 
-Each stored chunk is then indexed twice. The keyword side tokenizes the
-chunk and records term frequencies in a persistent inverted index — a table
-mapping each word to the chunks that contain it. The semantic side runs the
-chunk through every configured embedding signal and writes the resulting
-vectors to VectorKit, the sibling kit that owns vector storage and
-nearest-neighbor search. Content and vectors are joined by the chunk's UUID
-string, so a chunk and its meaning never drift apart.
+Each stored chunk is indexed twice. The keyword side tokenizes the
+chunk. It records term frequencies in a persistent inverted index. An
+inverted index is a table that maps each word to the chunks that contain
+it. The semantic side runs the chunk through every configured embedding
+signal. It writes the resulting vectors to VectorKit, the sibling kit
+that owns vector storage and nearest-neighbor search. Content and
+vectors join on the chunk's UUID string. A chunk and its meaning never
+drift apart.
 
-Four of the five honest signals are trainable: they learn a basis from the
-corpus itself. A basis is the trained reference data a signal needs to embed
-new text — for example, the word co-occurrence vectors Random Indexing
-accumulates. Training happens exactly twice: automatically on first ingest,
-and again whenever a caller requests an explicit reindex. Trained bases are
-serialized to a pinned little-endian byte format and persisted, so a
-reopened corpus embeds immediately without retraining.
+Four of the five honest signals are trainable. They learn a basis from
+the corpus itself. A basis is the trained reference data a signal needs
+to embed new text. One example is the word co-occurrence vectors that
+Random Indexing accumulates. Training happens exactly twice: once
+automatically on first ingest, and again whenever a caller requests an
+explicit reindex. Trained bases serialize to a pinned little-endian byte
+format and persist to storage. A reopened corpus embeds text right away.
+It never has to retrain first.
 
-Recall runs the pipeline in reverse. The query is embedded once, the vector
-lane fetches its nearest neighbors, the keyword lane fetches its best BM25
-matches, and Reciprocal Rank Fusion merges the two rankings with pinned
-weights (0.6 vector, 0.4 keyword). The winners are hydrated from the chunk
-store and returned as scored chunks. Ties always break toward the smaller
-identifier, so results are deterministic down to the last position.
+Recall runs the same pipeline in reverse. The query is embedded once.
+The vector lane fetches its nearest neighbors. The keyword lane fetches
+its best BM25 matches. Reciprocal Rank Fusion merges the two rankings.
+It uses pinned weights: 0.6 for the vector lane and 0.4 for the keyword
+lane. The winning chunks hydrate from the chunk store, then return to
+the caller as scored chunks. Ties always break toward the smaller
+identifier. Results stay deterministic down to the last position.
 
-Deletion is honest about its limits. Chunk rows are immutable, so removing a
-source deletes its index rows and vectors and records a tombstone that every
-rebuild consults; expunging additionally scrubs the stored text itself.
+Deletion is honest about its own limits. Chunk rows are immutable, so
+removing a source cannot erase its chunk rows. Instead it deletes the
+source's index rows and vectors. It also records a tombstone, which
+every rebuild consults afterward. Expunging goes one step further: it
+scrubs the stored text itself.
 
 ## How the Pieces Fit
 
-Figure 1 shows the kit's topology — its major parts and how data moves
-between them.
+Figure 1 shows the kit's topology. It shows the major parts, and how
+data moves between them.
 
 ![Figure 1. Topology of CorpusKit](topology.svg)
 
-*Figure 1. Topology of CorpusKit. Ingested text flows through the queue and
-the `Corpus` actor into the chunk store, the keyword index, and the vector
-store. A query fans out to both index lanes, and Reciprocal Rank Fusion
-merges them into scored chunks. Dashed regions mark the external kits and
-the persisted tables.*
+*Figure 1. Topology of CorpusKit. Ingested text flows through the queue
+and the `Corpus` actor into the chunk store, the keyword index, and the
+vector store. A query fans out to both index lanes. Reciprocal Rank
+Fusion merges them into scored chunks. Dashed regions mark the external
+kits and the persisted tables.*
 
-The `Corpus` actor is the seam everything passes through. It owns the chunk
-store (`BundleStore`), the persistent keyword index (`InvertedIndexStore`),
-the basis and counts stores, the tombstone store, and one slot per embedding
-signal. It hides VectorKit behind its own surface, so consumers never touch
-vector storage directly. The engine layer beneath it — sparse types, BM25
-weighting, the WAND/Block-Max WAND inverted index, and the fusion function —
-is pure computation with no storage of its own.
+The `Corpus` actor is the seam that everything passes through. It owns
+the chunk store, called `BundleStore`. It owns the persistent keyword
+index, called `InvertedIndexStore`. It also owns the basis store, the
+counts store, and the tombstone store. It holds one slot per embedding
+signal, too. The actor hides VectorKit behind its own surface. Consumers
+never touch vector storage directly.
 
-The package splits into two targets on purpose. The `CorpusKit` core target
-holds the storage, the engines, and the protocols. The `CorpusKitProviders`
-target holds every concrete embedding provider and tokenizer. Consumers that
-only need storage and BM25 never pull in provider code or model seams.
+Beneath the actor sits an engine layer. The layer holds the sparse
+types, the BM25 weighting code, the inverted index, and the fusion
+function. The inverted index runs two exact algorithms, WAND and
+Block-Max WAND. The whole engine layer is pure computation. It holds no
+storage of its own.
+
+The package splits into two targets on purpose. The `CorpusKit` core
+target holds the storage layer, the engines, and the protocols. The
+`CorpusKitProviders` target holds every concrete embedding provider and
+tokenizer. A consumer that needs only storage and BM25 search never has
+to pull in provider code or model seams.
 
 ## What Ships in the Package
 
-The package ships the two Swift targets, thirty-four Swift source files in
-all, and two mirror Rust crates: `rust/` for the core and `rust-providers/`
-for the providers. Shared canonical vectors in `Tests/SharedVectors/` gate
-both legs: BM25 impacts, per-provider embeddings, and serialized basis blobs
-must match byte for byte. The kit bundles no model weights. Hosts that want
-neural embeddings inject an inference function; everything the kit itself
-computes is deterministic and reproducible from the sources alone.
+The package ships two Swift targets. Together they hold thirty-four
+Swift source files. It also ships two mirror Rust crates: `rust/` for
+the core and `rust-providers/` for the providers. Shared canonical
+vectors in `Tests/SharedVectors/` gate both legs. Three things must
+match byte for byte across the legs: BM25 impacts, per-provider
+embeddings, and serialized basis blobs. The kit bundles no model weights
+of its own. A host that wants neural embeddings must inject an inference
+function. Everything the kit itself computes stays deterministic. It
+stays reproducible from the sources alone.
