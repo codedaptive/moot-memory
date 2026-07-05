@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+doc: topology
+package: LocusKit
+repo: moot-memory
+authored_commit: ecbe2bc361c83a1e8bc636767d33d0c678f88bd7
+authored_date: 2026-07-04
+sources:
+  - path: Sources/LocusKit/Estate.swift
+    blob: 668ad245361b96317e5fa9ad9a35ccc897c2c138
+  - path: Sources/LocusKit/EstateVerbs.swift
+    blob: ae30cf0be732d3b68bdb94e0193fd37171def37b
+  - path: Sources/LocusKit/DrawerStore.swift
+    blob: 4379bc3c3477c9ac0a29c533d517fc8a67fbf184
+  - path: Sources/LocusKit/NodeStore.swift
+    blob: 5fe41a84a4594365c16fe8616df24eb828092dbe
+  - path: Sources/LocusKit/ContainerFingerprintStore.swift
+    blob: fa7cb95c176cae53f0f24546112d87701ac1cf55
+  - path: Sources/LocusKit/BitmapEvaluator.swift
+    blob: f2e25b7a0037131f4ea230bff62d33601a4af1f5
+  - path: Sources/LocusKit/MerkleRollup.swift
+    blob: ad7b32eb7d9ed1938e1c88c8abfedecb40500562
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="620" viewBox="0 0 960 620" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+  </defs>
+
+  <style>
+    .box    { fill: #ffffff; stroke: #333; stroke-width: 1.5; }
+    .ext    { fill: #f4f4f4; stroke: #777; stroke-width: 1.2; }
+    .label  { font-size: 13px; fill: #111; }
+    .sub    { font-size: 10.5px; fill: #555; }
+    .flow   { stroke: #333; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+    .dflow  { stroke: #777; stroke-width: 1.3; fill: none; marker-end: url(#arrow); stroke-dasharray: 5 3; }
+    .region { fill: none; stroke: #999; stroke-width: 1.2; stroke-dasharray: 7 4; }
+    .rlabel { font-size: 11px; fill: #777; font-style: italic; }
+  </style>
+
+  <text x="20" y="28" font-size="15" font-weight="bold" fill="#111">LocusKit: capture and recall through the estate facade</text>
+
+  <!-- Inputs -->
+  <rect class="box" x="20" y="70" width="110" height="50" rx="6"/>
+  <text class="label" x="75" y="92" text-anchor="middle">Capture</text>
+  <text class="sub" x="75" y="107" text-anchor="middle">Estate.capture</text>
+
+  <rect class="box" x="20" y="260" width="110" height="50" rx="6"/>
+  <text class="label" x="75" y="282" text-anchor="middle">Recall</text>
+  <text class="sub" x="75" y="297" text-anchor="middle">Estate.recall</text>
+
+  <!-- Estate facade -->
+  <rect class="box" x="180" y="150" width="140" height="70" rx="6"/>
+  <text class="label" x="250" y="178" text-anchor="middle">Estate</text>
+  <text class="sub" x="250" y="193" text-anchor="middle">verb facade</text>
+  <text class="sub" x="250" y="207" text-anchor="middle">(actor)</text>
+
+  <!-- NodeStore -->
+  <rect class="box" x="380" y="70" width="150" height="55" rx="6"/>
+  <text class="label" x="455" y="93" text-anchor="middle">NodeStore</text>
+  <text class="sub" x="455" y="109" text-anchor="middle">containment tree</text>
+
+  <!-- DrawerStore -->
+  <rect class="box" x="380" y="160" width="150" height="60" rx="6"/>
+  <text class="label" x="455" y="184" text-anchor="middle">DrawerStore</text>
+  <text class="sub" x="455" y="200" text-anchor="middle">tables + write gate</text>
+
+  <!-- ContainerFingerprintStore -->
+  <rect class="box" x="380" y="255" width="150" height="55" rx="6"/>
+  <text class="label" x="455" y="278" text-anchor="middle">ContainerFingerprint</text>
+  <text class="sub" x="455" y="294" text-anchor="middle">Store (pruning OR)</text>
+
+  <!-- BitmapEvaluator -->
+  <rect class="box" x="590" y="255" width="150" height="55" rx="6"/>
+  <text class="label" x="665" y="278" text-anchor="middle">BitmapEvaluator</text>
+  <text class="sub" x="665" y="294" text-anchor="middle">4-tier filter pipeline</text>
+
+  <!-- MerkleRollup -->
+  <rect class="box" x="590" y="70" width="150" height="55" rx="6"/>
+  <text class="label" x="665" y="93" text-anchor="middle">MerkleRollup</text>
+  <text class="sub" x="665" y="109" text-anchor="middle">room → wing → estate</text>
+
+  <!-- Arrows: capture path -->
+  <line class="flow" x1="130" y1="95" x2="178" y2="165"/>
+  <line class="flow" x1="320" y1="175" x2="378" y2="130"/>
+  <line class="flow" x1="320" y1="185" x2="378" y2="188"/>
+  <line class="flow" x1="455" y1="220" x2="455" y2="253"/>
+  <line class="flow" x1="455" y1="160" x2="455" y2="127" opacity="0"/>
+  <line class="flow" x1="530" y1="95" x2="588" y2="95"/>
+  <line class="flow" x1="455" y1="70" x2="590" y2="90" opacity="0"/>
+  <path class="flow" d="M 455 160 C 500 130, 560 105, 588 95"/>
+
+  <!-- Arrows: recall path -->
+  <line class="flow" x1="130" y1="285" x2="178" y2="225"/>
+  <line class="flow" x1="320" y1="205" x2="378" y2="280"/>
+  <line class="flow" x1="530" y1="282" x2="588" y2="282"/>
+  <path class="flow" d="M 665 253 C 665 220, 560 200, 532 195"/>
+
+  <!-- External region -->
+  <rect class="region" x="20" y="400" width="720" height="130"/>
+  <text class="rlabel" x="30" y="418">External kits and libs (owned outside LocusKit)</text>
+
+  <rect class="ext" x="40" y="435" width="180" height="55" rx="6"/>
+  <text class="label" x="130" y="458" text-anchor="middle">AuditGate</text>
+  <text class="sub" x="130" y="474" text-anchor="middle">SubstrateLib : legal-transition</text>
+
+  <rect class="ext" x="260" y="435" width="180" height="55" rx="6"/>
+  <text class="label" x="350" y="458" text-anchor="middle">PersistenceKit</text>
+  <text class="sub" x="350" y="474" text-anchor="middle">Storage / RowStore / AuditLog</text>
+
+  <rect class="ext" x="480" y="435" width="220" height="55" rx="6"/>
+  <text class="label" x="590" y="458" text-anchor="middle">LatticeLib QIDClosure</text>
+  <text class="sub" x="590" y="474" text-anchor="middle">pinned P31/P279 ancestors</text>
+
+  <!-- Dashed arrows to external region -->
+  <path class="dflow" d="M 420 220 C 350 300, 200 380, 130 433"/>
+  <path class="dflow" d="M 455 220 C 420 300, 380 380, 350 433"/>
+  <path class="dflow" d="M 400 255 C 480 330, 550 380, 585 433"/>
+
+  <text class="sub" x="130" y="500">every gated write validated here</text>
+  <text class="sub" x="350" y="500">every table's backend</text>
+  <text class="sub" x="590" y="500">read by DrawerFingerprint's lattice block</text>
+
+  <text class="rlabel" x="30" y="560">Figure reads left to right: an input verb enters through Estate, which resolves</text>
+  <text class="rlabel" x="30" y="577">containment-tree nodes, writes through DrawerStore's audit-gated path (top),</text>
+  <text class="rlabel" x="30" y="594">or prunes and evaluates candidates for a read (bottom). Dashed edges cross a</text>
+  <text class="rlabel" x="30" y="611">kit/lib boundary LocusKit depends on but does not own.</text>
+</svg>
