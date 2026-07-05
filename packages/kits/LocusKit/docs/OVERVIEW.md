@@ -98,7 +98,7 @@ sources:
   - path: Sources/LocusKit/Summaries.swift
     blob: fa624f6b00d8bf40f1ccc02821e3e2b94bf94f6e
   - path: Sources/LocusKit/Tunnel.swift
-    blob: 8da22988147aab0a9451f06ec681d10891da1e95
+    blob: 8b1590668c930fb0e03eb2e89d2c31cd3d66c34b
   - path: Sources/LocusKit/TunnelOperational.swift
     blob: a5b9b8d3b5b7990ebcb9d9c6209564a7307aa13e
 ---

@@ -16,9 +16,9 @@ sources:
   - path: Sources/CorpusKit/Chunker.swift
     blob: a2718e06d1715f539ff633e7037c70e10ecb7a2d
   - path: Sources/CorpusKit/CorpusIngestQueue.swift
-    blob: 2c32133701ce728bc017d4ddad51b052cae990db
+    blob: 4dd3bd8eefb8e0e7dd474793d35acbe03b452df3
   - path: Sources/CorpusKit/CorpusKit.swift
-    blob: 4518f15fdb798c3a203c4a9db949f4d6172f540d
+    blob: bd4433bb5a7dc347df5e24c04d5f76a533261e54
   - path: Sources/CorpusKit/CorpusKitError.swift
     blob: 68ac8d0a248bc9c2dd1885b0bc531ac4ed9cb91d
   - path: Sources/CorpusKit/CorpusProviderCountsStore.swift
@@ -30,7 +30,7 @@ sources:
   - path: Sources/CorpusKit/Engine/InvertedIndex.swift
     blob: 1273adcb3794b1997c93488182fc5ed95b21f9ec
   - path: Sources/CorpusKit/Engine/InvertedIndexStore.swift
-    blob: 242baf05e5c846c719c403599a9a407bba646f5b
+    blob: 14f9de0b8e7ce0eae638605f24e43493afa0ac4e
   - path: Sources/CorpusKit/Engine/SparseTypes.swift
     blob: 54654e2c49b09d31f60c06503216a2b281939f87
   - path: Sources/CorpusKit/HybridRecall.swift
@@ -145,6 +145,16 @@ offset, and its exact text. The same content always produces the same
 identity. A repeat ingest of one document is therefore a harmless
 no-op. Two federated devices that ingest the same content converge on
 identical rows.
+
+A second drain worker handles bulk import. It claims jobs from its own
+queue stream and never touches the daily-driving stream above. It
+chunks each item and updates the keyword index, but it skips training
+and skips embedding. A bulk import instead trains its basis once. It
+then embeds every chunk once, at the end, through an explicit reindex.
+Skipping per-item training and embedding turns a large import from
+repeated wasted work into one pass. For a SQLite estate, the import
+worker also shards the chunking and tokenizing work across cores, then
+merges the results back through one writer.
 
 Each stored chunk is indexed twice. The keyword side tokenizes the
 chunk. It records term frequencies in a persistent inverted index. An

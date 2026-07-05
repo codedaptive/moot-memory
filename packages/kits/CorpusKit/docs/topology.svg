@@ -7,15 +7,15 @@ authored_commit: ecbe2bc361c83a1e8bc636767d33d0c678f88bd7
 authored_date: 2026-07-04
 sources:
   - path: Sources/CorpusKit/CorpusKit.swift
-    blob: 4518f15fdb798c3a203c4a9db949f4d6172f540d
+    blob: bd4433bb5a7dc347df5e24c04d5f76a533261e54
   - path: Sources/CorpusKit/CorpusIngestQueue.swift
-    blob: 2c32133701ce728bc017d4ddad51b052cae990db
+    blob: 4dd3bd8eefb8e0e7dd474793d35acbe03b452df3
   - path: Sources/CorpusKit/Chunker.swift
     blob: a2718e06d1715f539ff633e7037c70e10ecb7a2d
   - path: Sources/CorpusKit/BundleStore.swift
     blob: 419b1c0609597cdd68bf623ed37bd40a0171597b
   - path: Sources/CorpusKit/Engine/InvertedIndexStore.swift
-    blob: 242baf05e5c846c719c403599a9a407bba646f5b
+    blob: 14f9de0b8e7ce0eae638605f24e43493afa0ac4e
   - path: Sources/CorpusKit/BasisStore.swift
     blob: 48850906faa7c2fe4aac2859a1c4e892cff32cab
   - path: Sources/CorpusKit/HybridRecall.swift
@@ -51,7 +51,7 @@ sources:
 
   <rect class="box" x="180" y="70" width="160" height="52" rx="6"/>
   <text class="label" x="260" y="92" text-anchor="middle">Ingest queue</text>
-  <text class="sub" x="260" y="108" text-anchor="middle">QueueKit · encode stream</text>
+  <text class="sub" x="260" y="108" text-anchor="middle">QueueKit · encode + import streams</text>
 
   <rect class="box" x="390" y="70" width="140" height="52" rx="6"/>
   <text class="label" x="460" y="92" text-anchor="middle">Corpus actor</text>

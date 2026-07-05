@@ -11,7 +11,7 @@ sources:
   - path: Sources/VectorKit/FloatSimHashEmbeddingProvider.swift
     blob: efcb85396ceace1373e3017c0f799371a9a5c3bf
   - path: Sources/VectorKit/VectorStore.swift
-    blob: 3c7fe4a19eba1142ac82a993cee0e7660a4ffdce
+    blob: 45a4a6290398c27b383bc06ac5999cfaa0ca3422
   - path: Sources/VectorKit/VectorMatch.swift
     blob: 24cc2c1bd25f71a7cef60a043c3a640df2368a23
   - path: Sources/VectorKit/Engine/ResidentArrayStore.swift

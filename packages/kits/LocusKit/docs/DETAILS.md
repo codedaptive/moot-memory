@@ -98,7 +98,7 @@ sources:
   - path: Sources/LocusKit/Summaries.swift
     blob: fa624f6b00d8bf40f1ccc02821e3e2b94bf94f6e
   - path: Sources/LocusKit/Tunnel.swift
-    blob: 8da22988147aab0a9451f06ec681d10891da1e95
+    blob: 8b1590668c930fb0e03eb2e89d2c31cd3d66c34b
   - path: Sources/LocusKit/TunnelOperational.swift
     blob: a5b9b8d3b5b7990ebcb9d9c6209564a7307aa13e
 ---
@@ -886,6 +886,15 @@ fractional-index sibling ordering value. It is used only by
 the same parent sort by ascending `orderKey`. So no sibling needs to
 be rewritten when a new one is inserted between two existing
 siblings.
+
+This file also provides `Tunnel.adjectiveSensitivity`. This computed
+accessor decodes bits six through eleven of `adjectiveBitmap` as an
+`AdjectiveSensitivity`. An unrecognised raw value falls back to
+`.normal`. This fail-closed default matches `KGFact.adjectiveSensitivity`
+and `Drawer.adjectiveSensitivity`. The accessor is named
+`adjectiveSensitivity`, not `sensitivity`, so it does not collide with
+the provenance-bitmap `sensitivity` accessor pattern used elsewhere in
+LocusKit.
 
 ## TunnelOperational.swift
 
