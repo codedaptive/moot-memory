@@ -20,12 +20,12 @@ path = "src/lib.rs"
 # disabled (the default). Off-path cost: one AtomicBool load + branch.
 # Authority: DECISION_LIFT_PACKAGE_SWIFT_RULE_2026-05-28 + MANAGER_1.0_PLAN §4.
 [dependencies]
-substrate-ml = { package = "substrate-ml", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.25" }
-substrate-types = { package = "substrate-types", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.25" }
-engram-lib = { package = "engram-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.25" }
-persistence-kit = { package = "persistence-kit", git = "https://github.com/codedaptive/moot-system", tag = "v1.0.25" }
+substrate-ml = { package = "substrate-ml", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.26" }
+substrate-types = { package = "substrate-types", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.26" }
+engram-lib = { package = "engram-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.26" }
+persistence-kit = { package = "persistence-kit", git = "https://github.com/codedaptive/moot-system", tag = "v1.0.26" }
 uuid = { version = "1", features = ["v4"] }
-intellectus-lib = { package = "intellectus-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.25" }
+intellectus-lib = { package = "intellectus-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.26" }
 
 # tempfile is used in ResidentArrayStore tests to create temporary .vec
 # persistence tests (write → mmap-reopen → identical top-k) on a real

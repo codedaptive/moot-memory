@@ -206,7 +206,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 [[package]]
 name = "convergence-kit"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.25#64ce38445889014d4506670ce47229f2e80f981e"
+source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.26#9afe30173ba60da5a3947831face0a53a085cea8"
 dependencies = [
  "ed25519-dalek",
  "persistence-kit",
@@ -429,7 +429,7 @@ dependencies = [
 [[package]]
 name = "eidetic-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.25#2a33f774680f2d8d4a2b1cf4e80c4e77c16940b2"
+source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.26#d063ae21d05bcf58104ce22e9709852f721a39e1"
 dependencies = [
  "lattice-lib",
  "serde",
@@ -439,7 +439,7 @@ dependencies = [
 [[package]]
 name = "engram-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.25#eff42514594aa269959615bbb5bf62258abe2151"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.26#a4ded7cbe36011ede13d27793bfcafc13ee9cdae"
 dependencies = [
  "serde",
  "substrate-kernel",
@@ -724,7 +724,7 @@ dependencies = [
 [[package]]
 name = "intellectus-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.25#eff42514594aa269959615bbb5bf62258abe2151"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.26#a4ded7cbe36011ede13d27793bfcafc13ee9cdae"
 
 [[package]]
 name = "itoa"
@@ -766,7 +766,7 @@ dependencies = [
 [[package]]
 name = "lattice-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.25#2a33f774680f2d8d4a2b1cf4e80c4e77c16940b2"
+source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.26#d063ae21d05bcf58104ce22e9709852f721a39e1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1040,7 +1040,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "persistence-kit"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.25#64ce38445889014d4506670ce47229f2e80f981e"
+source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.26#9afe30173ba60da5a3947831face0a53a085cea8"
 dependencies = [
  "aes-gcm",
  "chrono",
@@ -1175,7 +1175,7 @@ dependencies = [
 [[package]]
 name = "queuekit"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.25#64ce38445889014d4506670ce47229f2e80f981e"
+source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.26#9afe30173ba60da5a3947831face0a53a085cea8"
 dependencies = [
  "intellectus-lib",
  "notify",
@@ -1470,7 +1470,7 @@ dependencies = [
 [[package]]
 name = "substrate-kernel"
 version = "1.0.0-skeleton"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.25#eff42514594aa269959615bbb5bf62258abe2151"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.26#a4ded7cbe36011ede13d27793bfcafc13ee9cdae"
 dependencies = [
  "intellectus-lib",
  "substrate-types",
@@ -1479,7 +1479,7 @@ dependencies = [
 [[package]]
 name = "substrate-lib"
 version = "1.0.0"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.25#eff42514594aa269959615bbb5bf62258abe2151"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.26#a4ded7cbe36011ede13d27793bfcafc13ee9cdae"
 dependencies = [
  "intellectus-lib",
  "substrate-kernel",
@@ -1490,7 +1490,7 @@ dependencies = [
 [[package]]
 name = "substrate-ml"
 version = "1.0.0-skeleton"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.25#eff42514594aa269959615bbb5bf62258abe2151"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.26#a4ded7cbe36011ede13d27793bfcafc13ee9cdae"
 dependencies = [
  "intellectus-lib",
  "substrate-kernel",
@@ -1500,7 +1500,7 @@ dependencies = [
 [[package]]
 name = "substrate-types"
 version = "1.0.0-skeleton"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.25#eff42514594aa269959615bbb5bf62258abe2151"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.26#a4ded7cbe36011ede13d27793bfcafc13ee9cdae"
 
 [[package]]
 name = "subtle"

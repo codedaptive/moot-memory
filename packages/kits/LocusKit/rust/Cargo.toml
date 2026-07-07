@@ -28,11 +28,11 @@ test-seams = []
 # for the SimHash / HyperplaneFamily / Fingerprint256 primitives that
 # `drawer_fingerprint` derives drawer fingerprints from.
 [dependencies]
-persistence-kit = { package = "persistence-kit", git = "https://github.com/codedaptive/moot-system", tag = "v1.0.25" }
-substrate-lib = { package = "substrate-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.25" }
-substrate-types = { package = "substrate-types", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.25" }
-substrate-kernel = { package = "substrate-kernel", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.25" }
-substrate-ml = { package = "substrate-ml", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.25" }
+persistence-kit = { package = "persistence-kit", git = "https://github.com/codedaptive/moot-system", tag = "v1.0.26" }
+substrate-lib = { package = "substrate-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.26" }
+substrate-types = { package = "substrate-types", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.26" }
+substrate-kernel = { package = "substrate-kernel", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.26" }
+substrate-ml = { package = "substrate-ml", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.26" }
 uuid = { version = "1", features = ["v4"] }
 # Ed25519 keypair generation for the federation signing identity minted at
 # Authority: DECISION_SYNCKIT_DESIGN_2026-05-19 §8.
@@ -44,11 +44,11 @@ base64 = "0.22"
 # path, recall, and KG-fact operation metrics via the report! macro,
 # which is a no-op when monitoring is disabled (the default).
 # Authority: DECISION_LIFT_PACKAGE_SWIFT_RULE_2026-05-28 + MANAGER_1.0_PLAN §4.
-intellectus-lib = { package = "intellectus-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.25" }
+intellectus-lib = { package = "intellectus-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.26" }
 # LatticeLib supplies qid_closure::ancestors — the pinned Q-ID taxonomic-closure
 # surface drawer_fingerprint hashes into the lattice-block qid_closure_hash slot
 # DECISION_LIFT_PACKAGE_SWIFT_RULE_2026-05-28 (the #7 feature requires it).
-lattice-lib = { package = "lattice-lib", git = "https://github.com/codedaptive/moot-semantics", tag = "v1.0.25" }
+lattice-lib = { package = "lattice-lib", git = "https://github.com/codedaptive/moot-semantics", tag = "v1.0.26" }
 # unicode-normalization provides NFC normalization for lookup_name derivation
 # (ADR-017 §8). Already a transitive dependency via the idna crate.
 unicode-normalization = "0.1"
