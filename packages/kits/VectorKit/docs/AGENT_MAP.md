@@ -2,8 +2,8 @@
 doc: AGENT_MAP
 package: VectorKit
 repo: moot-memory
-authored_commit: ecbe2bc361c83a1e8bc636767d33d0c678f88bd7
-authored_date: 2026-07-04
+authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
+authored_date: 2026-07-07
 sources:
   - path: Sources/VectorKit/EmbeddingProvider.swift
     blob: ad2bf52732b46960b9357a01fea37254d1681561
@@ -16,15 +16,15 @@ sources:
   - path: Sources/VectorKit/Engine/DenseMetric.swift
     blob: a28578e73ec36943a73d067e7768782311fa2005
   - path: Sources/VectorKit/Engine/FloatBruteForceIndex.swift
-    blob: 888d5a4079c84939b2cfde93160ee6bc3851adeb
+    blob: eb5e2cd5f09e67f0f3a87bddb0909cadf1420bdc
   - path: Sources/VectorKit/Engine/MaxSimScorer.swift
     blob: 91875a79b8f6eebf6a2fd0a3a9dde85311a50aae
   - path: Sources/VectorKit/Engine/MIHIndex.swift
     blob: 61e283122542218eaf1f057cd7b9f1022930956f
   - path: Sources/VectorKit/Engine/ResidentArrayStore.swift
-    blob: 21c67979dfc05d761909edec9700849d7cad74a5
+    blob: 28f87a58d405f4b6fd9c9e7794c89ab00d3d1e66
   - path: Sources/VectorKit/Engine/ResidentVectorArray.swift
-    blob: 6e0f689702e4173388324b22fd828559ce0b1ab2
+    blob: e913426ea4ce36473e53ee71007cf1d9e83904f3
   - path: Sources/VectorKit/Engine/VectorPayload.swift
     blob: 9259b4db9380cf9d854abd84a1d5059a0fcff5ec
   - path: Sources/VectorKit/Engine/VectorRecordKey.swift
@@ -40,7 +40,7 @@ sources:
   - path: Sources/VectorKit/VectorMatch.swift
     blob: 24cc2c1bd25f71a7cef60a043c3a640df2368a23
   - path: Sources/VectorKit/VectorStore.swift
-    blob: 45a4a6290398c27b383bc06ac5999cfaa0ca3422
+    blob: 1e1cdaf096e4f61e10ad35956c3f5478b3f90110
 ---
 
 # AGENT_MAP | VectorKit
@@ -48,6 +48,10 @@ sources:
 PURPOSE: on-device embedding generation (`EmbeddingProvider` seam) + model-tagged vector storage (`VectorStore`, PersistenceKit-backed) + dual-lane nearest-neighbour search: binary Hamming (Lane A `BruteForceIndex` oracle / Lane B `MIHIndex` sub-linear exact, promoted at `mihThreshold`) and float cosine/l2/dot (`FloatBruteForceIndex`, one index per modelID) + ColBERT MaxSim late-interaction scorer (`MaxSimScorer`, standalone, not wired into VectorStore).
 
 DEPS: imports EngramLib (Engram type, Hamming kernel via EngramLib.distances/Session | I-7 absolute), SubstrateML (FloatSimHash.project), SubstrateTypes, PersistenceKit (Storage/RowStore/BlobStore, product "PersistenceKit"), IntellectusLib (Intellectus.report telemetry, no-op when disabled). Test target additionally depends on PersistenceKitInMemory, PersistenceKitSQLite. Imported by: CorpusKit / CorpusKitProviders (concrete text embedding providers built on FloatSimHashEmbeddingProvider; CorpusKit's reindex job also calls replaceModelVectors for a full-model re-embed), GeniusLocusKit (destroyAllVectors as part of estate teardown). Rust port in rust/ mirrors every file (vector_store.rs, engine/{brute_force,mih,float_brute_force,max_sim,resident,resident_store,key,payload,hit,metric,seam}.rs, embedding_provider.rs, simhash_embedding_provider.rs, error.rs); no shared cross-language fixture file | conformance rests on both ports implementing the documented algorithms identically (colex enumeration, sidecar byte layout, budget arithmetic). Float lane is explicitly NOT four-way bit-identical (documented, not a gap).
+
+
+CURRENT TRUE-UP:
+- v1.0.24: default float search scans durable rows instead of caching a per-model float index. `ramResident` keeps the old `FloatBruteForceIndex` path. Resident arrays use `Data` for mmap-backed bytes. Model strings are interned. `replaceModelVectors` rejects int8 payloads before table mutation.
 
 ENTRY POINTS (most callers need only these):
 - VectorStore.swift:451 `VectorStore.addVector(itemID:engram:modelID:modelVersion:filedAt:)` | write one binary vector

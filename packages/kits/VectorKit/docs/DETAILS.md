@@ -2,8 +2,8 @@
 doc: DETAILS
 package: VectorKit
 repo: moot-memory
-authored_commit: ecbe2bc361c83a1e8bc636767d33d0c678f88bd7
-authored_date: 2026-07-04
+authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
+authored_date: 2026-07-07
 sources:
   - path: Sources/VectorKit/EmbeddingProvider.swift
     blob: ad2bf52732b46960b9357a01fea37254d1681561
@@ -16,15 +16,15 @@ sources:
   - path: Sources/VectorKit/Engine/DenseMetric.swift
     blob: a28578e73ec36943a73d067e7768782311fa2005
   - path: Sources/VectorKit/Engine/FloatBruteForceIndex.swift
-    blob: 888d5a4079c84939b2cfde93160ee6bc3851adeb
+    blob: eb5e2cd5f09e67f0f3a87bddb0909cadf1420bdc
   - path: Sources/VectorKit/Engine/MaxSimScorer.swift
     blob: 91875a79b8f6eebf6a2fd0a3a9dde85311a50aae
   - path: Sources/VectorKit/Engine/MIHIndex.swift
     blob: 61e283122542218eaf1f057cd7b9f1022930956f
   - path: Sources/VectorKit/Engine/ResidentArrayStore.swift
-    blob: 21c67979dfc05d761909edec9700849d7cad74a5
+    blob: 28f87a58d405f4b6fd9c9e7794c89ab00d3d1e66
   - path: Sources/VectorKit/Engine/ResidentVectorArray.swift
-    blob: 6e0f689702e4173388324b22fd828559ce0b1ab2
+    blob: e913426ea4ce36473e53ee71007cf1d9e83904f3
   - path: Sources/VectorKit/Engine/VectorPayload.swift
     blob: 9259b4db9380cf9d854abd84a1d5059a0fcff5ec
   - path: Sources/VectorKit/Engine/VectorRecordKey.swift
@@ -40,10 +40,22 @@ sources:
   - path: Sources/VectorKit/VectorMatch.swift
     blob: 24cc2c1bd25f71a7cef60a043c3a640df2368a23
   - path: Sources/VectorKit/VectorStore.swift
-    blob: 45a4a6290398c27b383bc06ac5999cfaa0ca3422
+    blob: 1e1cdaf096e4f61e10ad35956c3f5478b3f90110
 ---
 
 # VectorKit Details
+
+## Current Release Details
+
+ResidentVectorArray now stores bytes as `Data`.
+A mmap-backed sidecar can share those bytes with the OS page cache.
+`ModelPartitionEntry` also carries `modelVersion`.
+Repeated model strings no longer need to live on every slot.
+
+The default float search path scans the `vectors` table for one model.
+It computes cosine distance row by row.
+The `ramResident` hint still uses `FloatBruteForceIndex`.
+`replaceModelVectors` now rejects int8 payloads before it changes the table.
 
 This document walks through every source file in the package. Read
 `OVERVIEW.md` first for the big picture. Files appear here in pipeline

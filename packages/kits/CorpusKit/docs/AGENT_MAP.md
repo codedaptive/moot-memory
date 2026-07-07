@@ -2,8 +2,8 @@
 doc: AGENT_MAP
 package: CorpusKit
 repo: moot-memory
-authored_commit: ecbe2bc361c83a1e8bc636767d33d0c678f88bd7
-authored_date: 2026-07-04
+authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
+authored_date: 2026-07-07
 sources:
   - path: Sources/CorpusKit/BasisStore.swift
     blob: 48850906faa7c2fe4aac2859a1c4e892cff32cab
@@ -18,7 +18,7 @@ sources:
   - path: Sources/CorpusKit/CorpusIngestQueue.swift
     blob: 4dd3bd8eefb8e0e7dd474793d35acbe03b452df3
   - path: Sources/CorpusKit/CorpusKit.swift
-    blob: bd4433bb5a7dc347df5e24c04d5f76a533261e54
+    blob: dfa3b8a046f6c1c03ea03e7b92ba6b0bd7c8f1b5
   - path: Sources/CorpusKit/CorpusKitError.swift
     blob: 68ac8d0a248bc9c2dd1885b0bc531ac4ed9cb91d
   - path: Sources/CorpusKit/CorpusProviderCountsStore.swift
@@ -30,11 +30,11 @@ sources:
   - path: Sources/CorpusKit/Engine/InvertedIndex.swift
     blob: 1273adcb3794b1997c93488182fc5ed95b21f9ec
   - path: Sources/CorpusKit/Engine/InvertedIndexStore.swift
-    blob: 14f9de0b8e7ce0eae638605f24e43493afa0ac4e
+    blob: e1852f2ed585a0ca1047fbcaa0880fd0bb8aa596
   - path: Sources/CorpusKit/Engine/SparseTypes.swift
     blob: 54654e2c49b09d31f60c06503216a2b281939f87
   - path: Sources/CorpusKit/HybridRecall.swift
-    blob: 21d9fb3415b699c6469a1e80d5e84da1e43981ca
+    blob: e6d187401211d53465ac5b2277adf07d4307974c
   - path: Sources/CorpusKit/RemovedSourceStore.swift
     blob: 138a2a094ff369ee69eafa04eeba77206a58e5f4
   - path: Sources/CorpusKit/SyncManifest.swift
@@ -80,6 +80,10 @@ sources:
 PURPOSE: standalone on-device RAG kit. Text → chunks (content-addressed UUID) → BundleStore (PersistenceKit) + persistent BM25 inverted index + per-provider vectors (VectorKit) → hybrid recall (Hamming kNN + BM25, weighted RRF) → [ScoredChunk]. Ships two targets: CorpusKit (core: stores, engines, protocols) and CorpusKitProviders (concrete embedding providers/tokenizers). Default production ensemble = five honest deterministic signals (RI/PPMI/LSA/NMF/FDC).
 
 DEPS: CorpusKit imports SubstrateTypes, SubstrateLib (MerkleHash), SubstrateML, EngramLib, EideticLib (sentence segmentation), IntellectusLib (telemetry, off-by-default), PersistenceKit (+InMemory, +SQLite), ConvergenceKit (manifest only), VectorKit, QueueKit, Crypto. CorpusKitProviders additionally imports SubstrateKernel (FloatVecOps), LatticeLib (FDC runtime; FDC math NOT reimplemented). Imported by: GeniusLocusKit (orchestrator tier). Rust ports: `rust/` (core, crate corpus-kit) + `rust-providers/` (crate corpus-kit-providers); shared fixtures `Tests/SharedVectors/*.json` read by BOTH legs gate bit-identity. NL providers are Swift-only (ADR-019, no Rust twin).
+
+
+CURRENT TRUE-UP:
+- v1.0.24: empty `Corpus` model lists throw `CorpusKitError`. BM25 source search and inverted-index topK are async throwing. Disk-backed mode loads BM25 term and doc maps on demand instead of keeping them in RAM after open.
 
 ENTRY POINTS (most callers need only these):
 - CorpusKit.swift:725 `Corpus.init(storage:models:)` : open estate corpus; `models[0]` = default signal (:697 single-model convenience)

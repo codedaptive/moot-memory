@@ -2,8 +2,8 @@
 doc: DETAILS
 package: LocusKit
 repo: moot-memory
-authored_commit: ecbe2bc361c83a1e8bc636767d33d0c678f88bd7
-authored_date: 2026-07-04
+authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
+authored_date: 2026-07-07
 sources:
   - path: Sources/LocusKit/Adjectives.swift
     blob: d95d3ad8b02c61b166be790138b710b595f30c3d
@@ -36,9 +36,9 @@ sources:
   - path: Sources/LocusKit/DrawerStateValidator.swift
     blob: 0fcc6d5affd39342d2263c841c5fd67894b7f163
   - path: Sources/LocusKit/DrawerStore.swift
-    blob: 4379bc3c3477c9ac0a29c533d517fc8a67fbf184
+    blob: b8241ac78713ae087cf67fdd5f012310eda90e76
   - path: Sources/LocusKit/Estate.swift
-    blob: 668ad245361b96317e5fa9ad9a35ccc897c2c138
+    blob: 40fab998a8eca155c749460190cca0c31cf3098c
   - path: Sources/LocusKit/EstateAudit.swift
     blob: f17f901ea714fee7b7c2a6b8dc3c18e6684586d8
   - path: Sources/LocusKit/EstateIdentityKeyStore.swift
@@ -68,7 +68,7 @@ sources:
   - path: Sources/LocusKit/LocusKitError.swift
     blob: cf9ea82e072c56c69fb2e88a62c1835391a3768e
   - path: Sources/LocusKit/LocusKitSchema.swift
-    blob: f672290df86b6c6df6ca5d243a20e62a0ca1c023
+    blob: a5d3c65a1f6f81bd06a884eb106edb6afe5cfd39
   - path: Sources/LocusKit/LocusKitTelemetry.swift
     blob: 732f995c52e8af16477f34243b5d898080cec7da
   - path: Sources/LocusKit/LocusKitVocabulary.swift
@@ -104,6 +104,16 @@ sources:
 ---
 
 # LocusKit Details
+
+## Current Release Details
+
+DrawerStore now seeds its HLC generator from wall time on open.
+That keeps new audit stamps after already committed events across a restart.
+
+Drawer inserts and updates refresh `content_fingerprint`.
+The read path fails loudly if the stored fingerprint is missing or malformed.
+`Estate.activeDrawersAfter` exposes bounded paging for backfill jobs.
+`addTunnel` copies the maximum endpoint sensitivity into the tunnel bitmap.
 
 This document walks through every source file in the package. Read
 `OVERVIEW.md` first for the big picture. Files appear here in

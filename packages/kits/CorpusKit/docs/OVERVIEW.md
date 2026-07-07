@@ -2,8 +2,8 @@
 doc: OVERVIEW
 package: CorpusKit
 repo: moot-memory
-authored_commit: ecbe2bc361c83a1e8bc636767d33d0c678f88bd7
-authored_date: 2026-07-04
+authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
+authored_date: 2026-07-07
 sources:
   - path: Sources/CorpusKit/BasisStore.swift
     blob: 48850906faa7c2fe4aac2859a1c4e892cff32cab
@@ -18,7 +18,7 @@ sources:
   - path: Sources/CorpusKit/CorpusIngestQueue.swift
     blob: 4dd3bd8eefb8e0e7dd474793d35acbe03b452df3
   - path: Sources/CorpusKit/CorpusKit.swift
-    blob: bd4433bb5a7dc347df5e24c04d5f76a533261e54
+    blob: dfa3b8a046f6c1c03ea03e7b92ba6b0bd7c8f1b5
   - path: Sources/CorpusKit/CorpusKitError.swift
     blob: 68ac8d0a248bc9c2dd1885b0bc531ac4ed9cb91d
   - path: Sources/CorpusKit/CorpusProviderCountsStore.swift
@@ -30,11 +30,11 @@ sources:
   - path: Sources/CorpusKit/Engine/InvertedIndex.swift
     blob: 1273adcb3794b1997c93488182fc5ed95b21f9ec
   - path: Sources/CorpusKit/Engine/InvertedIndexStore.swift
-    blob: 14f9de0b8e7ce0eae638605f24e43493afa0ac4e
+    blob: e1852f2ed585a0ca1047fbcaa0880fd0bb8aa596
   - path: Sources/CorpusKit/Engine/SparseTypes.swift
     blob: 54654e2c49b09d31f60c06503216a2b281939f87
   - path: Sources/CorpusKit/HybridRecall.swift
-    blob: 21d9fb3415b699c6469a1e80d5e84da1e43981ca
+    blob: e6d187401211d53465ac5b2277adf07d4307974c
   - path: Sources/CorpusKit/RemovedSourceStore.swift
     blob: 138a2a094ff369ee69eafa04eeba77206a58e5f4
   - path: Sources/CorpusKit/SyncManifest.swift
@@ -76,6 +76,17 @@ sources:
 ---
 
 # CorpusKit Overview
+
+## Current Release Notes
+
+CorpusKit now favors disk-backed BM25 state by default.
+The inverted index opens by checking its tables.
+It loads term frequencies and document lengths only when it must build a query index.
+A host can still choose `.ramResident` through PersistenceKit.
+
+The public BM25 source search now throws.
+A corpus with no embedding models returns `CorpusKitError`.
+It does not stop the process.
 
 ## What This Kit Does
 

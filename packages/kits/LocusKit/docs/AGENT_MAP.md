@@ -2,8 +2,8 @@
 doc: AGENT_MAP
 package: LocusKit
 repo: moot-memory
-authored_commit: ecbe2bc361c83a1e8bc636767d33d0c678f88bd7
-authored_date: 2026-07-04
+authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
+authored_date: 2026-07-07
 sources:
   - path: Sources/LocusKit/Adjectives.swift
     blob: d95d3ad8b02c61b166be790138b710b595f30c3d
@@ -36,9 +36,9 @@ sources:
   - path: Sources/LocusKit/DrawerStateValidator.swift
     blob: 0fcc6d5affd39342d2263c841c5fd67894b7f163
   - path: Sources/LocusKit/DrawerStore.swift
-    blob: 4379bc3c3477c9ac0a29c533d517fc8a67fbf184
+    blob: b8241ac78713ae087cf67fdd5f012310eda90e76
   - path: Sources/LocusKit/Estate.swift
-    blob: 668ad245361b96317e5fa9ad9a35ccc897c2c138
+    blob: 40fab998a8eca155c749460190cca0c31cf3098c
   - path: Sources/LocusKit/EstateAudit.swift
     blob: f17f901ea714fee7b7c2a6b8dc3c18e6684586d8
   - path: Sources/LocusKit/EstateIdentityKeyStore.swift
@@ -68,7 +68,7 @@ sources:
   - path: Sources/LocusKit/LocusKitError.swift
     blob: cf9ea82e072c56c69fb2e88a62c1835391a3768e
   - path: Sources/LocusKit/LocusKitSchema.swift
-    blob: f672290df86b6c6df6ca5d243a20e62a0ca1c023
+    blob: a5d3c65a1f6f81bd06a884eb106edb6afe5cfd39
   - path: Sources/LocusKit/LocusKitTelemetry.swift
     blob: 732f995c52e8af16477f34243b5d898080cec7da
   - path: Sources/LocusKit/LocusKitVocabulary.swift
@@ -108,6 +108,10 @@ sources:
 PURPOSE: storage substrate for one MOOTx01 estate (MemPalace). Nine gated noun tables (drawer/tunnel/diary/kg_fact/proposal/association/learned_reference/source_catalog/node) over PersistenceKit; every state-changing write routes through SubstrateLib's AuditGate (legal-transition + forbidden-combination check) and appends one sealed AuditEvent atomically with the row update. Read side: RecallFrame → [Filter] chain → fingerprint-pruned, four-tier BitmapEvaluator (bitmap/structured/content/order) → paged RecallStream. Estate (actor) is the sole public facade; GeniusLocusKit composes on top.
 
 DEPS: imports SubstrateLib+SubstrateTypes+SubstrateKernel (AuditGate, BitField, RowStateAutomaton, HLC, SimHash, ORReduce, FNV, MerkleHash : DO NOT REIMPLEMENT), SubstrateML (LexRank-adjacent kernels used indirectly), PersistenceKit (Storage/RowStore/AuditLog/Transaction abstraction : SQLite/Postgres/InMemory backends), IntellectusLib (opt-in telemetry, off-path ~1ns), LatticeLib (QIDClosure : pinned P31/P279 ancestor snapshot, DrawerFingerprint lattice block only). Imported by: GeniusLocusKit (composes on top : never the reverse). Rust port in rust/ (57 files under src/+tests/) mirrors every type + the bitmap/state/fingerprint math; conformance tests in rust/tests/*.rs gate byte-identity per axis.
+
+
+CURRENT TRUE-UP:
+- v1.0.24: schema v9 adds drawer `content_fingerprint`; writes refresh it and read paths fail loud on missing or malformed values. `activeDrawersAfter` exposes bounded paging. HLC starts from wall time on open. Tunnels inherit endpoint sensitivity ceilings.
 
 ENTRY POINTS (most callers need only these):
 - Estate.swift:187 `Estate.open(storage:owner:identityKeyStore:) -> Estate` : open existing estate, validates bitmap_layout_version, mints/loads Ed25519 identity

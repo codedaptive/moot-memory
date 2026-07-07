@@ -3,15 +3,15 @@
 doc: topology
 package: LocusKit
 repo: moot-memory
-authored_commit: ecbe2bc361c83a1e8bc636767d33d0c678f88bd7
-authored_date: 2026-07-04
+authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
+authored_date: 2026-07-07
 sources:
   - path: Sources/LocusKit/Estate.swift
-    blob: 668ad245361b96317e5fa9ad9a35ccc897c2c138
+    blob: 40fab998a8eca155c749460190cca0c31cf3098c
   - path: Sources/LocusKit/EstateVerbs.swift
     blob: ae30cf0be732d3b68bdb94e0193fd37171def37b
   - path: Sources/LocusKit/DrawerStore.swift
-    blob: 4379bc3c3477c9ac0a29c533d517fc8a67fbf184
+    blob: b8241ac78713ae087cf67fdd5f012310eda90e76
   - path: Sources/LocusKit/NodeStore.swift
     blob: 5fe41a84a4594365c16fe8616df24eb828092dbe
   - path: Sources/LocusKit/ContainerFingerprintStore.swift
@@ -40,6 +40,7 @@ sources:
   </style>
 
   <text x="20" y="28" font-size="15" font-weight="bold" fill="#111">LocusKit: capture and recall through the estate facade</text>
+  <text class="sub" x="20" y="46">v1.0.24: schema v9 stores drawer fingerprints and adds paging.</text>
 
   <!-- Inputs -->
   <rect class="box" x="20" y="70" width="110" height="50" rx="6"/>

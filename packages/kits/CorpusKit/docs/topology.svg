@@ -3,11 +3,11 @@
 doc: topology
 package: CorpusKit
 repo: moot-memory
-authored_commit: ecbe2bc361c83a1e8bc636767d33d0c678f88bd7
-authored_date: 2026-07-04
+authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
+authored_date: 2026-07-07
 sources:
   - path: Sources/CorpusKit/CorpusKit.swift
-    blob: bd4433bb5a7dc347df5e24c04d5f76a533261e54
+    blob: dfa3b8a046f6c1c03ea03e7b92ba6b0bd7c8f1b5
   - path: Sources/CorpusKit/CorpusIngestQueue.swift
     blob: 4dd3bd8eefb8e0e7dd474793d35acbe03b452df3
   - path: Sources/CorpusKit/Chunker.swift
@@ -15,11 +15,11 @@ sources:
   - path: Sources/CorpusKit/BundleStore.swift
     blob: 419b1c0609597cdd68bf623ed37bd40a0171597b
   - path: Sources/CorpusKit/Engine/InvertedIndexStore.swift
-    blob: 14f9de0b8e7ce0eae638605f24e43493afa0ac4e
+    blob: e1852f2ed585a0ca1047fbcaa0880fd0bb8aa596
   - path: Sources/CorpusKit/BasisStore.swift
     blob: 48850906faa7c2fe4aac2859a1c4e892cff32cab
   - path: Sources/CorpusKit/HybridRecall.swift
-    blob: 21d9fb3415b699c6469a1e80d5e84da1e43981ca
+    blob: e6d187401211d53465ac5b2277adf07d4307974c
   - path: Sources/CorpusKit/Engine/Fusion.swift
     blob: d128ed9bc206612fc7c2e849a2e77d03d8a6cafa
 -->
@@ -43,6 +43,7 @@ sources:
 
   <!-- Title -->
   <text x="20" y="28" font-size="15" font-weight="bold" fill="#111">CorpusKit: text in, scored chunks out</text>
+  <text class="sub" x="20" y="46">v1.0.24: BM25 state loads from durable tables on demand.</text>
 
   <!-- Ingest row -->
   <rect class="box" x="20" y="70" width="120" height="52" rx="6"/>
