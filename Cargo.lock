@@ -206,7 +206,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 [[package]]
 name = "convergence-kit"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.22#ad01e7354966dae984a0888e99c6be246ba2fb19"
+source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.24#3c3ce06528a1d1b3b6e9aa8a6008cba20a243c23"
 dependencies = [
  "ed25519-dalek",
  "persistence-kit",
@@ -429,7 +429,7 @@ dependencies = [
 [[package]]
 name = "eidetic-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.22#30fbc96fbb393f9a885d49cc6b9365d0eab85062"
+source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.24#ee425fbef9955ae233794d035902d12db4348044"
 dependencies = [
  "lattice-lib",
  "serde",
@@ -439,7 +439,7 @@ dependencies = [
 [[package]]
 name = "engram-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.24#22ca2725f0db6a880932d1d38680b38e0d1d92de"
 dependencies = [
  "serde",
  "substrate-kernel",
@@ -705,9 +705,9 @@ dependencies = [
 
 [[package]]
 name = "inotify-sys"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ea94e891b3606826e9c998be69ddca42247dad8ad50b1649a5cb7e1c9ae06fd"
+checksum = "c033f80b2c113cdf91ab7a33faa9cbc014726dcad99880c8609af2a370edf37d"
 dependencies = [
  "libc",
 ]
@@ -724,7 +724,7 @@ dependencies = [
 [[package]]
 name = "intellectus-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.24#22ca2725f0db6a880932d1d38680b38e0d1d92de"
 
 [[package]]
 name = "itoa"
@@ -766,7 +766,7 @@ dependencies = [
 [[package]]
 name = "lattice-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.22#30fbc96fbb393f9a885d49cc6b9365d0eab85062"
+source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.24#ee425fbef9955ae233794d035902d12db4348044"
 dependencies = [
  "serde",
  "serde_json",
@@ -1040,7 +1040,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "persistence-kit"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.22#ad01e7354966dae984a0888e99c6be246ba2fb19"
+source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.24#3c3ce06528a1d1b3b6e9aa8a6008cba20a243c23"
 dependencies = [
  "aes-gcm",
  "chrono",
@@ -1175,7 +1175,7 @@ dependencies = [
 [[package]]
 name = "queuekit"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.22#ad01e7354966dae984a0888e99c6be246ba2fb19"
+source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.24#3c3ce06528a1d1b3b6e9aa8a6008cba20a243c23"
 dependencies = [
  "intellectus-lib",
  "notify",
@@ -1470,7 +1470,7 @@ dependencies = [
 [[package]]
 name = "substrate-kernel"
 version = "1.0.0-skeleton"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.24#22ca2725f0db6a880932d1d38680b38e0d1d92de"
 dependencies = [
  "intellectus-lib",
  "substrate-types",
@@ -1479,7 +1479,7 @@ dependencies = [
 [[package]]
 name = "substrate-lib"
 version = "1.0.0"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.24#22ca2725f0db6a880932d1d38680b38e0d1d92de"
 dependencies = [
  "intellectus-lib",
  "substrate-kernel",
@@ -1490,7 +1490,7 @@ dependencies = [
 [[package]]
 name = "substrate-ml"
 version = "1.0.0-skeleton"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.24#22ca2725f0db6a880932d1d38680b38e0d1d92de"
 dependencies = [
  "intellectus-lib",
  "substrate-kernel",
@@ -1500,7 +1500,7 @@ dependencies = [
 [[package]]
 name = "substrate-types"
 version = "1.0.0-skeleton"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.24#22ca2725f0db6a880932d1d38680b38e0d1d92de"
 
 [[package]]
 name = "subtle"
