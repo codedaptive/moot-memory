@@ -137,9 +137,9 @@ checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
 
 [[package]]
 name = "cc"
-version = "1.2.65"
+version = "1.2.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e228eec9be7c17ccb640b59b36a5cd805ea2a564a4c5e162c2f659fea30d3b96"
+checksum = "f5d6cac793997bd970000024b2934968efe83b382de4fdcf4fcb46b6ee4ad996"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -206,7 +206,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 [[package]]
 name = "convergence-kit"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.15#d0b41020b3da465b0e90f5ba554006997c526a77"
+source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.22#ad01e7354966dae984a0888e99c6be246ba2fb19"
 dependencies = [
  "ed25519-dalek",
  "persistence-kit",
@@ -291,18 +291,18 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-channel"
-version = "0.5.15"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
+checksum = "d85363c37faeca707aef026efa9f3b34d077bce547e48f770770625c6013679e"
 dependencies = [
  "crossbeam-utils",
 ]
 
 [[package]]
 name = "crossbeam-utils"
-version = "0.8.21"
+version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
+checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
 name = "crypto-common"
@@ -429,7 +429,7 @@ dependencies = [
 [[package]]
 name = "eidetic-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.15#20359112bcdc80191f50e0dfb9056da79ce21f35"
+source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.22#30fbc96fbb393f9a885d49cc6b9365d0eab85062"
 dependencies = [
  "lattice-lib",
  "serde",
@@ -439,7 +439,7 @@ dependencies = [
 [[package]]
 name = "engram-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.15#75b3c265736ffdd9e644c3c22cc131ab45651989"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
 dependencies = [
  "serde",
  "substrate-kernel",
@@ -724,7 +724,7 @@ dependencies = [
 [[package]]
 name = "intellectus-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.15#75b3c265736ffdd9e644c3c22cc131ab45651989"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
 
 [[package]]
 name = "itoa"
@@ -766,7 +766,7 @@ dependencies = [
 [[package]]
 name = "lattice-lib"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.15#20359112bcdc80191f50e0dfb9056da79ce21f35"
+source = "git+https://github.com/codedaptive/moot-semantics?tag=v1.0.22#30fbc96fbb393f9a885d49cc6b9365d0eab85062"
 dependencies = [
  "serde",
  "serde_json",
@@ -1040,7 +1040,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "persistence-kit"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.15#d0b41020b3da465b0e90f5ba554006997c526a77"
+source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.22#ad01e7354966dae984a0888e99c6be246ba2fb19"
 dependencies = [
  "aes-gcm",
  "chrono",
@@ -1175,7 +1175,7 @@ dependencies = [
 [[package]]
 name = "queuekit"
 version = "0.1.0"
-source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.15#d0b41020b3da465b0e90f5ba554006997c526a77"
+source = "git+https://github.com/codedaptive/moot-system?tag=v1.0.22#ad01e7354966dae984a0888e99c6be246ba2fb19"
 dependencies = [
  "intellectus-lib",
  "notify",
@@ -1274,9 +1274,9 @@ dependencies = [
 
 [[package]]
 name = "rustversion"
-version = "1.0.22"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "same-file"
@@ -1470,7 +1470,7 @@ dependencies = [
 [[package]]
 name = "substrate-kernel"
 version = "1.0.0-skeleton"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.15#75b3c265736ffdd9e644c3c22cc131ab45651989"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
 dependencies = [
  "intellectus-lib",
  "substrate-types",
@@ -1479,7 +1479,7 @@ dependencies = [
 [[package]]
 name = "substrate-lib"
 version = "1.0.0"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.15#75b3c265736ffdd9e644c3c22cc131ab45651989"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
 dependencies = [
  "intellectus-lib",
  "substrate-kernel",
@@ -1490,7 +1490,7 @@ dependencies = [
 [[package]]
 name = "substrate-ml"
 version = "1.0.0-skeleton"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.15#75b3c265736ffdd9e644c3c22cc131ab45651989"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
 dependencies = [
  "intellectus-lib",
  "substrate-kernel",
@@ -1500,7 +1500,7 @@ dependencies = [
 [[package]]
 name = "substrate-types"
 version = "1.0.0-skeleton"
-source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.15#75b3c265736ffdd9e644c3c22cc131ab45651989"
+source = "git+https://github.com/codedaptive/moot-core?tag=v1.0.22#2a438866551b3788048433e0e71bdc8bece9ad8d"
 
 [[package]]
 name = "subtle"
@@ -1959,18 +1959,18 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "zerocopy"
-version = "0.8.52"
+version = "0.8.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce1022995ff5ff5d841ad7d994facc23098cd40152f2c1d11cd607c6f530653f"
+checksum = "75726053136156d419e285b9b7eddaaea9e3fea6ce32eed44a89901f0bd98de1"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.52"
+version = "0.8.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ae7f38b72ec2a254e2b87ef277cf2cd4fb97cbebf944faa6f33354da0867930"
+checksum = "4714fd92cf900833d49538023a9b3915155210801d1c1169eba513b2addefd71"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -87,14 +87,30 @@ public actor InvertedIndexStore {
 
     private let storage: any Storage
 
-    // MARK: - In-memory state (derived from DB on open)
+    /// ADR-026: when `.ramResident`, term frequencies and document lengths
+    /// are held in RAM between queries (pre-ADR-026 behavior). When
+    /// `.diskBacked` (default), they are loaded from SQLite on demand.
+    private var ramTermFreqs: BM25Weighting.TermFreqTable?
+    private var ramDocLengths: [String: Int]?
 
-    /// term → itemID → term frequency
-    private var termFreqs: BM25Weighting.TermFreqTable = [:]
-    /// itemID → document length in tokens
-    private var docLengths: [String: Int] = [:]
-    /// Cached (index, termMapping). Invalidated by every write.
+    // MARK: - Cached index (ADR-026: no persistent in-memory dictionaries)
+
+    /// Last-built (index, termMapping), served by `buildIndex(parameters:)`
+    /// while `isDirty` is false. Term frequencies and document lengths are
+    /// NOT held in RAM between builds — they are loaded from SQLite into
+    /// transient locals inside `buildIndex`, used to construct the index,
+    /// then discarded. This eliminates ~580MB of heap dictionaries on a
+    /// 50K-memory estate (the `termFreqs` and `docLengths` maps that
+    /// previously persisted between queries). The built `InvertedIndex`
+    /// itself is compact (impact-quantized postings, ~120MB) and remains
+    /// cached until the next write invalidates it.
     private var cachedPair: (index: InvertedIndex, termMapping: [String: UInt32])? = nil
+    /// True when the durable iix_* tables have changed since `cachedPair`
+    /// was built. Starts `true` — there is nothing to serve until the
+    /// first build. Set by every mutating call (`index`, `foldPostings`,
+    /// `remove`, `deleteAll`); cleared only inside `buildIndex(parameters:)`
+    /// once a fresh pair has been built.
+    private var isDirty: Bool = true
 
     // MARK: - Init
 
@@ -108,16 +124,33 @@ public actor InvertedIndexStore {
 
     // MARK: - Open (load persisted state)
 
-    /// Load persisted term frequencies and document lengths from storage.
-    ///
-    /// Call this once after the `Storage` backend is opened with the schema.
+    /// Validate the schema is accessible. ADR-026: term frequencies and
+    /// document lengths are no longer loaded into RAM at open time. They
+    /// are loaded from SQLite on demand inside `buildIndex` and discarded
+    /// after the index is built.
     public func open() async throws {
-        try await loadTermFreqs()
-        try await loadDocLengths()
-        logger.info("InvertedIndexStore opened: \(self.docLengths.count) docs, \(self.termFreqs.count) terms")
+        if storage.configuration.residencyHint == .ramResident {
+            // Pre-ADR-026 behavior: load everything into RAM at open.
+            ramTermFreqs = try await loadTermFreqsTransient()
+            ramDocLengths = try await loadDocLengthsTransient()
+            let docCount = self.ramDocLengths?.count ?? 0
+            let termCount = self.ramTermFreqs?.count ?? 0
+            logger.info("InvertedIndexStore opened (ramResident): \(docCount) docs, \(termCount) terms")
+        } else {
+            // ADR-026: verify tables are readable. Data stays on disk.
+            let docRows = try await storage.rowStore.query(
+                table: "iix_doclens", where: nil, orderBy: [], limit: 1, offset: nil)
+            let termRows = try await storage.rowStore.query(
+                table: "iix_termfreqs", where: nil, orderBy: [], limit: 1, offset: nil)
+            logger.info("InvertedIndexStore opened (diskBacked): tables accessible (docs=\(!docRows.isEmpty), terms=\(!termRows.isEmpty))")
+        }
     }
 
-    private func loadTermFreqs() async throws {
+    /// Load term frequencies from SQLite into a transient dictionary.
+    /// Called only inside `buildIndex`; the result is discarded after
+    /// the InvertedIndex is built. ADR-026: no persistent in-memory mirror.
+    private func loadTermFreqsTransient() async throws -> BM25Weighting.TermFreqTable {
+        var tf: BM25Weighting.TermFreqTable = [:]
         let rows = try await storage.rowStore.query(
             table: "iix_termfreqs",
             where: nil
@@ -128,11 +161,16 @@ public actor InvertedIndexStore {
                 case .text(let itemID) = row["item_id"],
                 case .int(let freq) = row["freq"]
             else { continue }
-            termFreqs[term, default: [:]][itemID] = Int(freq)
+            tf[term, default: [:]][itemID] = Int(freq)
         }
+        return tf
     }
 
-    private func loadDocLengths() async throws {
+    /// Load document lengths from SQLite into a transient dictionary.
+    /// Called only inside `buildIndex`; the result is discarded after
+    /// the InvertedIndex is built. ADR-026: no persistent in-memory mirror.
+    private func loadDocLengthsTransient() async throws -> [String: Int] {
+        var dl: [String: Int] = [:]
         let rows = try await storage.rowStore.query(
             table: "iix_doclens",
             where: nil
@@ -142,8 +180,9 @@ public actor InvertedIndexStore {
                 case .text(let itemID) = row["item_id"],
                 case .int(let length) = row["length"]
             else { continue }
-            docLengths[itemID] = Int(length)
+            dl[itemID] = Int(length)
         }
+        return dl
     }
 
     // MARK: - Document indexing
@@ -159,15 +198,14 @@ public actor InvertedIndexStore {
     public func index(itemID: String, tokens: [String], now: Date) async throws {
         // Remove existing state for this item first (idempotent re-index).
         try await deleteFromStorage(itemID: itemID)
-        deleteMem(itemID: itemID)
 
-        guard !tokens.isEmpty else { return }
+        guard !tokens.isEmpty else { isDirty = true; return }
 
         var tf = [String: Int]()
         for t in tokens { tf[t, default: 0] += 1 }
         let docLen = tokens.count
 
-        // Persist term frequencies.
+        // Persist term frequencies — durable SQLite only, no in-memory mirror.
         for (term, freq) in tf {
             try await storage.rowStore.upsert(
                 table: "iix_termfreqs",
@@ -178,7 +216,6 @@ public actor InvertedIndexStore {
                 ],
                 conflictColumns: ["term", "item_id"]
             )
-            termFreqs[term, default: [:]][itemID] = freq
         }
         // Persist doc length.
         try await storage.rowStore.upsert(
@@ -189,8 +226,14 @@ public actor InvertedIndexStore {
             ],
             conflictColumns: ["item_id"]
         )
-        docLengths[itemID] = docLen
-        cachedPair = nil
+        // Maintain RAM mirror when ramResident.
+        if ramTermFreqs != nil {
+            for (term, freq) in tf {
+                ramTermFreqs?[term, default: [:]][itemID] = freq
+            }
+            ramDocLengths?[itemID] = docLen
+        }
+        isDirty = true
     }
 
     /// Fold worker-computed postings into the IN-MEMORY maps only — the memory
@@ -198,16 +241,17 @@ public actor InvertedIndexStore {
     /// `SQLiteStorage.mergeShard` (SQLite copies the shard rows internally; this
     /// method folds the same postings the workers already computed, so nothing
     /// is re-read from disk). Re-delivered items simply overwrite their prior
-    /// entries (idempotent under queue-retry). Clears the cached BM25 index once
-    /// for the batch. Rust twin: `InvertedIndexStore::fold_postings`.
+    /// entries (idempotent under queue-retry). Marks the cached BM25 index
+    /// dirty once for the whole batch (see `isDirty`) rather than per item —
+    /// the next query rebuilds once, not once per folded item. Rust twin:
+    /// `InvertedIndexStore::fold_postings`.
+    /// Mark the index dirty after an external shard merge writes to the
+    /// durable iix_* tables. ADR-026: no in-memory mirror — the durable
+    /// tables are the source of truth, and `buildIndex` reloads from them
+    /// on the next query. The `items` parameter is accepted for API
+    /// compatibility but the data is NOT copied into RAM dictionaries.
     public func foldPostings(_ items: [(itemID: String, tf: [String: Int], docLen: Int)]) {
-        for item in items {
-            for (term, freq) in item.tf {
-                termFreqs[term, default: [:]][item.itemID] = freq
-            }
-            docLengths[item.itemID] = item.docLen
-        }
-        cachedPair = nil
+        isDirty = true
     }
 
     /// Remove a document from the index.
@@ -215,8 +259,12 @@ public actor InvertedIndexStore {
     /// - Parameter itemID: item to remove. No-op if not present.
     public func remove(itemID: String) async throws {
         try await deleteFromStorage(itemID: itemID)
-        deleteMem(itemID: itemID)
+        // Release cached index immediately on destructive ops so sensitive
+        // terms don't linger in process memory after deletion.
         cachedPair = nil
+        ramTermFreqs = nil
+        ramDocLengths = nil
+        isDirty = true
     }
 
     private func deleteFromStorage(itemID: String) async throws {
@@ -230,30 +278,37 @@ public actor InvertedIndexStore {
         )
     }
 
-    private func deleteMem(itemID: String) {
-        docLengths.removeValue(forKey: itemID)
-        for term in Array(termFreqs.keys) {
-            termFreqs[term]?.removeValue(forKey: itemID)
-            if termFreqs[term]?.isEmpty == true { termFreqs.removeValue(forKey: term) }
-        }
-    }
-
     // MARK: - Index building
 
     /// Build (or return cached) InvertedIndex with BM25-weighted impacts.
     ///
     /// - Parameter parameters: BM25 k1/b.
     /// - Returns: (InvertedIndex, term mapping) ready for querying.
+    /// Build the BM25-weighted InvertedIndex from the durable iix_* tables.
+    ///
+    /// ADR-026: term frequencies and document lengths are loaded from SQLite
+    /// into transient locals, used to build the index, then discarded. The
+    /// built InvertedIndex is cached; the raw dictionaries are not.
     public func buildIndex(
         parameters: BM25Parameters = BM25Parameters()
-    ) -> (index: InvertedIndex, termMapping: [String: UInt32]) {
-        if let cached = cachedPair { return cached }
+    ) async throws -> (index: InvertedIndex, termMapping: [String: UInt32]) {
+        if let cached = cachedPair, !isDirty { return cached }
+        // ADR-026: use RAM maps when ramResident, else load from SQLite.
+        let termFreqs: BM25Weighting.TermFreqTable
+        let docLengths: [String: Int]
+        if let rt = ramTermFreqs, let rd = ramDocLengths {
+            termFreqs = rt; docLengths = rd
+        } else {
+            termFreqs = try await loadTermFreqsTransient()
+            docLengths = try await loadDocLengthsTransient()
+        }
         let pair = BM25Weighting.build(
             termFreqs: termFreqs,
             docLengths: docLengths,
             parameters: parameters
         )
         cachedPair = pair
+        isDirty = false
         return pair
     }
 
@@ -272,8 +327,8 @@ public actor InvertedIndexStore {
         k: Int,
         parameters: BM25Parameters = BM25Parameters(),
         algorithm: InvertedIndex.Algorithm = .blockMaxWand
-    ) -> [SparseHit] {
-        let (index, termMapping) = buildIndex(parameters: parameters)
+    ) async throws -> [SparseHit] {
+        let (index, termMapping) = try await buildIndex(parameters: parameters)
         let query = BM25Weighting.queryPairs(queryTerms: queryTerms, termMapping: termMapping)
         return index.topK(query: query, k: k, algorithm: algorithm)
     }
@@ -299,15 +354,21 @@ public actor InvertedIndexStore {
             table: "iix_doclens",
             where: .isTrue
         )
-        // Clear in-memory state to match the now-empty tables.
-        termFreqs.removeAll()
-        docLengths.removeAll()
+        // Release cached index immediately so sensitive terms don't linger.
         cachedPair = nil
+        ramTermFreqs = nil
+        ramDocLengths = nil
+        isDirty = true
         logger.info("InvertedIndexStore: deleteAll cleared all term-freq + doc-len rows")
     }
 
     // MARK: - Accessors
 
-    /// Number of indexed documents.
-    public var documentCount: Int { docLengths.count }
+    /// Number of indexed documents. Queries the durable table
+    /// (ADR-026: no in-memory mirror).
+    public func documentCount() async throws -> Int {
+        let rows = try await storage.rowStore.query(
+            table: "iix_doclens", where: nil)
+        return rows.count
+    }
 }

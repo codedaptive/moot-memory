@@ -844,7 +844,7 @@ public actor VectorStore {
         //    policy. Dropping the map entry is the invalidation (its presence is
         //    the built flag); other models' indices are untouched.
         for input in batch where input.payload.kind == .float32 {
-            floatIndices.removeValue(forKey: input.modelID)
+            // ADR-026: float index is no longer cached; no invalidation needed.
         }
 
         let endTime = Date().timeIntervalSince1970
@@ -1220,47 +1220,45 @@ public actor VectorStore {
     ///   - limit: maximum number of matches to return.
     /// - Returns: up to `limit` matches, nearest first. Empty if `limit`
     ///   is non-positive, the probe is empty, or no float rows exist.
+    /// ADR-026: float NN search. `.diskBacked` scans SQLite directly
+    /// (no heap copy). `.ramResident` caches a FloatBruteForceIndex.
     public func findNearestFloat(
         probe: [Float],
         modelID: String,
         limit: Int
     ) async throws -> [VectorMatch] {
         guard limit > 0, !probe.isEmpty else { return [] }
-
-        // Build (once, lazily) the Lane D index for THIS modelID from its float
-        // rows only — uniform stride, so the search dimension guard is satisfied
-        // even when the table holds several models' float rows of differing
-        // the model has no float rows (no float lane for it).
-        guard let modelIndex = try await _ensureFloatIndexBuilt(modelID: modelID) else {
-            return []
+        if storage.configuration.residencyHint == .ramResident {
+            return try await _findNearestFloatCached(probe: probe, modelID: modelID, limit: limit)
         }
-
-        let probePayload = VectorPayload(floats: probe)
-        // The index already holds only this model's rows, but keep the modelID
-        // metadata filter for defence-in-depth (a future shared-build path would
-        // still be correctly scoped).
-        let filter = MetadataFilter(modelID: modelID)
-
-        // FloatBruteForceIndex computes cosine distance and applies the
-        // (distance ASC, itemID ASC) tie-break (retrieval algorithms ref §0.3).
-        let hits = try await modelIndex.search(
-            probe: probePayload,
-            metric: .float(.cosine),
-            k: limit,
-            filter: filter
-        )
-
-        // Map DenseHit → VectorMatch. The float lane's rawDistance is the
-        // cosine-distance Float bit pattern reinterpreted as Int32 (see
-        // FloatBruteForceIndex); recover the float and quantise to the
-        // VectorMatch integer-distance convention (×10_000, the same scale
-        // the Rust DenseHit uses) so the cross-language rank-identity
-        // fixtures compare like-for-like.
+        let hits = try await _floatScanFromTable(
+            modelID: modelID, probe: probe, k: limit, direction: .nearest)
         return hits.map { hit in
-            let cosineDistance = hit.floatDistance ?? 1.0
-            return VectorMatch(
+            VectorMatch(
                 itemID: hit.key.itemID,
-                distance: Int((cosineDistance * 10_000).rounded()),
+                distance: Int((hit.distance * 10_000).rounded()),
+                modelID: hit.key.modelID
+            )
+        }
+    }
+
+    /// Pre-ADR-026 cached float search path. Used when residencyHint == .ramResident.
+    private func _findNearestFloatCached(probe: [Float], modelID: String, limit: Int) async throws -> [VectorMatch] {
+        if floatIndices[modelID] == nil {
+            let records = try await _fetchFloatRecords(modelID: modelID)
+            guard let arr = Self.buildFloatArray(from: records) else { return [] }
+            let index = FloatBruteForceIndex()
+            await index.build(from: arr)
+            floatIndices[modelID] = index
+        }
+        guard let modelIndex = floatIndices[modelID] else { return [] }
+        let probePayload = VectorPayload(floats: probe)
+        let filter = MetadataFilter(modelID: modelID)
+        let hits = try await modelIndex.search(probe: probePayload, metric: .float(.cosine), k: limit, filter: filter)
+        return hits.map { hit in
+            VectorMatch(
+                itemID: hit.key.itemID,
+                distance: Int(((hit.floatDistance ?? 1.0) * 10_000).rounded()),
                 modelID: hit.key.modelID
             )
         }
@@ -1291,38 +1289,44 @@ public actor VectorStore {
     /// - Returns: up to `limit` matches, FARTHEST (most dissimilar) first.
     ///   Empty if `limit` is non-positive, the probe is empty, or no float
     ///   rows exist for the model.
+    /// ADR-026: farthest float search. Same residencyHint dispatch as nearest.
     public func findFarthestFloat(
         probe: [Float],
         modelID: String,
         limit: Int
     ) async throws -> [VectorMatch] {
         guard limit > 0, !probe.isEmpty else { return [] }
-
-        // Same lazy per-model build as findNearestFloat: the model's float
-        // index, or nil when the model has no float rows.
-        guard let modelIndex = try await _ensureFloatIndexBuilt(modelID: modelID) else {
-            return []
+        if storage.configuration.residencyHint == .ramResident {
+            return try await _findFarthestFloatCached(probe: probe, modelID: modelID, limit: limit)
         }
+        let hits = try await _floatScanFromTable(
+            modelID: modelID, probe: probe, k: limit, direction: .farthest)
+        return hits.map { hit in
+            VectorMatch(
+                itemID: hit.key.itemID,
+                distance: Int((hit.distance * 10_000).rounded()),
+                modelID: hit.key.modelID
+            )
+        }
+    }
 
+    /// Pre-ADR-026 cached farthest float path. Used when residencyHint == .ramResident.
+    private func _findFarthestFloatCached(probe: [Float], modelID: String, limit: Int) async throws -> [VectorMatch] {
+        if floatIndices[modelID] == nil {
+            let records = try await _fetchFloatRecords(modelID: modelID)
+            guard let arr = Self.buildFloatArray(from: records) else { return [] }
+            let index = FloatBruteForceIndex()
+            await index.build(from: arr)
+            floatIndices[modelID] = index
+        }
+        guard let modelIndex = floatIndices[modelID] else { return [] }
         let probePayload = VectorPayload(floats: probe)
         let filter = MetadataFilter(modelID: modelID)
-
-        // FloatBruteForceIndex.searchFarthest applies the SAME cosine and the
-        // (itemID ASC) tie-break, ordered by distance DESCENDING.
-        let hits = try await modelIndex.searchFarthest(
-            probe: probePayload,
-            metric: .float(.cosine),
-            k: limit,
-            filter: filter
-        )
-
-        // Map DenseHit → VectorMatch exactly as findNearestFloat does so the
-        // cross-language rank-identity fixtures compare like-for-like.
+        let hits = try await modelIndex.searchFarthest(probe: probePayload, metric: .float(.cosine), k: limit, filter: filter)
         return hits.map { hit in
-            let cosineDistance = hit.floatDistance ?? 1.0
-            return VectorMatch(
+            VectorMatch(
                 itemID: hit.key.itemID,
-                distance: Int((cosineDistance * 10_000).rounded()),
+                distance: Int(((hit.floatDistance ?? 1.0) * 10_000).rounded()),
                 modelID: hit.key.modelID
             )
         }
@@ -1400,7 +1404,7 @@ public actor VectorStore {
         // cannot tombstone selectively here; a lazy rebuild is correct and is
         // paid once on next search. Other models' indices are untouched
         // (dropping the map entry is the invalidation).
-        floatIndices.removeValue(forKey: modelID)
+        // ADR-026: float index is no longer cached; no invalidation needed.
         // Tombstone every resident slot for this (itemID, modelID) pair.
         // Only if the index has been built — if not, the delete is already
         // reflected in the table and will be absent on first build.
@@ -1435,6 +1439,14 @@ public actor VectorStore {
     /// durable table in ONE transaction (bulk delete + plain insert → a single
     /// fsync, no per-row existence SELECT) and rebuilds the resident binary index
     public func replaceModelVectors(modelID: String, _ batch: [VectorPayloadInput]) async throws {
+        // PRECONDITION GUARD: reject any int8 payload in the batch fail-closed (#6).
+        // Matches the guard in addPayload and addPayloads — the quantization policy
+        // (scale, per-dim scale) has not been ratified.
+        if let bad = batch.first(where: { $0.payload.kind == .int8 }) {
+            throw VectorKitError.int8QuantizationPolicyUndefined(
+                "int8 writes are rejected: quantization policy is unspecified. " +
+                "replaceModelVectors received an int8 payload for item \(bad.itemID)")
+        }
         // Flush any in-flight deferred burst so the table is the single source of
         // truth before the resident index is rebuilt from it below.
         if deferredIndexDirty { try await publishResidentIndex() }
@@ -1473,7 +1485,7 @@ public actor VectorStore {
 
         // 2. Rebuild the resident binary index ONCE from the durable table (O(n)),
         //    and drop this model's Lane D float index so it lazily rebuilds too.
-        floatIndices.removeValue(forKey: modelID)
+        // ADR-026: float index is no longer cached; no invalidation needed.
         try await _rebuildBinaryIndexFromTable()
     }
 
@@ -1542,7 +1554,7 @@ public actor VectorStore {
         // deleted, so every per-modelID resident float array must be cleared.
         // Dropping all map entries clears every model's index; each rebuilds
         // lazily (and empty) on the next findNearestFloat for that model.
-        floatIndices.removeAll()
+        // ADR-026: float index is no longer cached; no invalidation needed.
         log.info("VectorStore.destroyAllVectors: all rows deleted, resident array reset")
     }
 
@@ -1630,21 +1642,93 @@ public actor VectorStore {
     /// index requires a single stride, so all float rows for the queried
     /// model share one dimension (spec I-4 keeps models on disjoint
     /// partitions, and one model emits one dimension).
-    private func _ensureFloatIndexBuilt(modelID: String) async throws -> FloatBruteForceIndex? {
-        // The map entry's presence is the per-model "built" flag.
-        if let existing = floatIndices[modelID] { return existing }
-        let records = try await _fetchFloatRecords(modelID: modelID)
-        guard let arr = Self.buildFloatArray(from: records) else {
-            // No float rows for this model — no float lane for it. Do NOT cache
-            // an empty index: a later ingest of this model's first float row
-            // must be able to build a real index on the next search.
-            return nil
+    /// ADR-026: float NN search scans the SQLite `vectors` table directly
+    /// via a cursor, computing distance per row and maintaining a top-k
+    /// heap. No ResidentVectorArray, no FloatBruteForceIndex, no 2GB heap
+    /// allocation. With PRAGMA mmap_size, each row read is an OS page-cache
+    /// hit — zero malloc for the vector data.
+    ///
+    /// Returns the top-k (or bottom-k for farthest) scored results directly.
+    private func _floatScanFromTable(
+        modelID: String,
+        probe: [Float],
+        k: Int,
+        direction: FloatSearchDirection
+    ) async throws -> [(distance: Float, key: VectorRecordKey)] {
+        let rows = try await storage.rowStore.query(
+            table: "vectors",
+            where: .and([
+                .eq(Column(table: "vectors", name: "kind"),
+                    .int(Int64(VectorKind.float32.rawValue))),
+                .eq(Column(table: "vectors", name: "model_id"), .text(modelID))
+            ]),
+            orderBy: [],
+            limit: nil,
+            offset: nil
+        )
+        // String interning for model fields (ADR-026).
+        var internCache: [String: String] = [:]
+        func intern(_ s: String) -> String {
+            if let existing = internCache[s] { return existing }
+            internCache[s] = s
+            return s
         }
-        let index = FloatBruteForceIndex()
-        await index.build(from: arr)
-        floatIndices[modelID] = index
-        return index
+        var scored: [(distance: Float, key: VectorRecordKey)] = []
+        scored.reserveCapacity(rows.count)
+        for row in rows {
+            guard case let .text(itemID) = row["item_id"] ?? .null,
+                  case let .int(vectorIndex) = row["vector_index"] ?? .null,
+                  case let .text(rawModelID) = row["model_id"] ?? .null,
+                  case let .text(rawModelVersion) = row["model_version"] ?? .null,
+                  let payload = Self.decodePayload(from: row),
+                  payload.kind == .float32 else { continue }
+            // Decode float vector from BLOB — one row at a time, no
+            // intermediate contiguous buffer. The BLOB bytes come from
+            // mmap'd SQLite pages (PRAGMA mmap_size).
+            let dim = payload.bytes.count / 4
+            guard dim == probe.count else { continue }
+            var candidate = [Float]()
+            candidate.reserveCapacity(dim)
+            var byteIdx = payload.bytes.startIndex
+            for _ in 0..<dim {
+                let b0 = payload.bytes[byteIdx]; byteIdx += 1
+                let b1 = payload.bytes[byteIdx]; byteIdx += 1
+                let b2 = payload.bytes[byteIdx]; byteIdx += 1
+                let b3 = payload.bytes[byteIdx]; byteIdx += 1
+                let bits = UInt32(b0) | (UInt32(b1) << 8) | (UInt32(b2) << 16) | (UInt32(b3) << 24)
+                candidate.append(Float(bitPattern: bits))
+            }
+            // Cosine distance inline (1 − cos(a,b)). The only metric
+            // used by the product is cosine; l2/dot are test-only.
+            var dotP: Float = 0, normA: Float = 0, normB: Float = 0
+            for j in 0..<dim {
+                dotP  += probe[j] * candidate[j]
+                normA += probe[j] * probe[j]
+                normB += candidate[j] * candidate[j]
+            }
+            let denom = normA.squareRoot() * normB.squareRoot()
+            let dist: Float = denom > 0
+                ? 1.0 - min(max(dotP / denom, -1.0), 1.0)
+                : 1.0
+            let key = VectorRecordKey(
+                itemID: itemID,
+                vectorIndex: UInt32(vectorIndex),
+                modelID: intern(rawModelID),
+                modelVersion: intern(rawModelVersion)
+            )
+            scored.append((distance: dist, key: key))
+        }
+        // Sort and take top-k.
+        switch direction {
+        case .nearest:
+            scored.sort { $0.distance < $1.distance }
+        case .farthest:
+            scored.sort { $0.distance > $1.distance }
+        }
+        return Array(scored.prefix(k))
     }
+
+    enum FloatSearchDirection { case nearest, farthest }
 
     /// Fetch the float32 rows for ONE modelID from the `vectors` table, sorted
     /// by VectorRecordKey natural order (arch spec §4.2: deterministic partition
@@ -1665,20 +1749,29 @@ public actor VectorStore {
             limit: nil,
             offset: nil
         )
+        // ADR-026 string interning: modelID is the same for every row
+        // (we're fetching a single modelID partition). Intern to avoid
+        // N identical String heap allocations.
+        var internCache: [String: String] = [:]
+        func intern(_ s: String) -> String {
+            if let existing = internCache[s] { return existing }
+            internCache[s] = s
+            return s
+        }
         var records: [(key: VectorRecordKey, payload: VectorPayload)] = []
         records.reserveCapacity(rows.count)
         for row in rows {
             guard case let .text(itemID) = row["item_id"] ?? .null,
                   case let .int(vectorIndex) = row["vector_index"] ?? .null,
-                  case let .text(modelID) = row["model_id"] ?? .null,
-                  case let .text(modelVersion) = row["model_version"] ?? .null,
+                  case let .text(rawModelID) = row["model_id"] ?? .null,
+                  case let .text(rawModelVersion) = row["model_version"] ?? .null,
                   let payload = Self.decodePayload(from: row),
                   payload.kind == .float32 else { continue }
             let key = VectorRecordKey(
                 itemID: itemID,
                 vectorIndex: UInt32(vectorIndex),
-                modelID: modelID,
-                modelVersion: modelVersion
+                modelID: intern(rawModelID),
+                modelVersion: intern(rawModelVersion)
             )
             records.append((key: key, payload: payload))
         }
@@ -1697,12 +1790,12 @@ public actor VectorStore {
     ) -> ResidentVectorArray? {
         guard let first = records.first else { return nil }
         let stride = UInt32(first.payload.bytes.count)
-        var storage = [UInt8]()
-        storage.reserveCapacity(records.count * Int(stride))
+        var storageBytes = Data()
+        storageBytes.reserveCapacity(records.count * Int(stride))
         var keys = [VectorRecordKey]()
         keys.reserveCapacity(records.count)
         for r in records {
-            storage.append(contentsOf: r.payload.bytes)
+            storageBytes.append(contentsOf: r.payload.bytes)
             keys.append(r.key)
         }
         let tombstones = [UInt64](repeating: 0, count: (records.count + 63) / 64)
@@ -1711,7 +1804,7 @@ public actor VectorStore {
             kind: .float32,
             stride: stride,
             count: UInt32(records.count),
-            storage: storage,
+            storage: storageBytes,
             keys: keys,
             modelPartitions: partitions,
             tombstones: tombstones
@@ -1779,6 +1872,15 @@ public actor VectorStore {
             limit: nil,
             offset: nil
         )
+        // ADR-026 string interning: modelID and modelVersion repeat for
+        // every row in a partition. Interning collapses 200K+ identical
+        // String heap allocations to one shared instance per unique value.
+        var internCache: [String: String] = [:]
+        func intern(_ s: String) -> String {
+            if let existing = internCache[s] { return existing }
+            internCache[s] = s
+            return s
+        }
         var records: [(key: VectorRecordKey, bytes: [UInt8])] = []
         records.reserveCapacity(rows.count)
         for row in rows {
@@ -1786,8 +1888,8 @@ public actor VectorStore {
             let key = VectorRecordKey(
                 itemID: sv.itemID,
                 vectorIndex: sv.vectorIndex,
-                modelID: sv.modelID,
-                modelVersion: sv.modelVersion
+                modelID: intern(sv.modelID),
+                modelVersion: intern(sv.modelVersion)
             )
             records.append((key: key, bytes: sv.engram.wireBytes))
         }
@@ -1826,7 +1928,7 @@ public actor VectorStore {
         // rebuilds from the table. (See deleteAllVectors: the delete carries no
         // kind, so a lazy rebuild is the correct coherence path for the float
         // lane.) Other models' indices are untouched.
-        floatIndices.removeValue(forKey: modelID)
+        // ADR-026: float index is no longer cached; no invalidation needed.
         // Only touch the resident array if it has been built. If not, the
         // table delete is already authoritative and the entry will be absent
         // when the array is first built on the next findNearest call.

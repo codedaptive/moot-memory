@@ -691,9 +691,29 @@ impl Estate {
             now,
         );
         tunnel.kind = frame.kind;
-        tunnel.source_drawer_id = frame.source_drawer_id;
-        tunnel.target_drawer_id = frame.target_drawer_id;
+        tunnel.source_drawer_id = frame.source_drawer_id.clone();
+        tunnel.target_drawer_id = frame.target_drawer_id.clone();
         tunnel.operational_bitmap = op_bitmap;
+        // Sensitivity ceiling (#57): a tunnel inherits the highest
+        // sensitivity of its two endpoints so filtering one endpoint
+        // automatically hides the tunnel. Look up both endpoint drawers
+        // (when drawer-level — None means room-level, sensitivity = Normal).
+        let endpoint_ids: Vec<&str> = [&frame.source_drawer_id, &frame.target_drawer_id]
+            .iter()
+            .filter_map(|opt| opt.as_deref())
+            .collect();
+        if !endpoint_ids.is_empty() {
+            let mut max_sens: u8 = 0; // Normal = 0
+            for eid in &endpoint_ids {
+                if let Some(d) = self.store.get_drawer(eid)? {
+                    let s = bit_field::extract_field(d.adjective_bitmap, 6, 6) as u8;
+                    if s > max_sens { max_sens = s; }
+                }
+            }
+            // Write max sensitivity into bits 6–11 of adjectiveBitmap
+            // (cookbook §2.3, same layout as drawers).
+            tunnel.adjective_bitmap = bit_field::write_field(max_sens as i64, tunnel.adjective_bitmap, 6, 6);
+        }
         self.store.add_tunnel(&tunnel)?;
         // Emit a Capture event for the new tunnel. NounType::Tunnel = 1 (wire-stable,
         // matches SubstrateTypes/NounType.swift).
@@ -1253,6 +1273,21 @@ impl Estate {
         limit: Option<usize>,
     ) -> Result<Vec<Drawer>, LocusKitError> {
         self.store.all_drawers_bounded(limit)
+    }
+
+    /// Bounded page of active (non-tombstoned) drawers ordered by `id`
+    /// ascending, optionally starting strictly after `after_id`.
+    /// Estate-level pass-through over `DrawerStore::active_drawers_after`.
+    /// Used by GeniusLocusKit's reindex-missing sweep to walk the drawers
+    /// table in bounded, cursor-advancing pages instead of reloading the
+    /// full table on every pass (MEDIUM perf fix; mirrors the Swift
+    /// `Estate.activeDrawersAfter(id:limit:)`).
+    pub fn active_drawers_after(
+        &self,
+        after_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Drawer>, LocusKitError> {
+        self.store.active_drawers_after(after_id, limit)
     }
 
     /// Fingerprints of every non-tombstoned drawer captured in the closed

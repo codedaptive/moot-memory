@@ -2,7 +2,7 @@
 # Publish Report
 
 Venue: `moot-memory`
-Source commit: `2b2e66e0de0bb58438202a6b54ee84495c759d63`
+Source commit: `5d94bcc7cf411088843b9107c755c2c56f678113`
 
 ## Loaded Packages
 
@@ -185,8 +185,8 @@ Removed internal/process comment lines:
 - `packages/kits/LocusKit/rust/src/drawer_fingerprint.rs`: 5 line(s)
 - `packages/kits/LocusKit/rust/src/drawer_operational.rs`: 7 line(s)
 - `packages/kits/LocusKit/rust/src/drawer_state_validator.rs`: 1 line(s)
-- `packages/kits/LocusKit/rust/src/drawer_store.rs`: 17 line(s)
-- `packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs`: 28 line(s)
+- `packages/kits/LocusKit/rust/src/drawer_store.rs`: 18 line(s)
+- `packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs`: 31 line(s)
 - `packages/kits/LocusKit/rust/src/error.rs`: 2 line(s)
 - `packages/kits/LocusKit/rust/src/estate.rs`: 10 line(s)
 - `packages/kits/LocusKit/rust/src/estate_verbs.rs`: 34 line(s)
@@ -204,7 +204,7 @@ Removed internal/process comment lines:
 - `packages/kits/LocusKit/rust/src/proposal_operational.rs`: 2 line(s)
 - `packages/kits/LocusKit/rust/src/proposal_tests.rs`: 1 line(s)
 - `packages/kits/LocusKit/rust/src/recall_stream.rs`: 4 line(s)
-- `packages/kits/LocusKit/rust/src/schema.rs`: 10 line(s)
+- `packages/kits/LocusKit/rust/src/schema.rs`: 11 line(s)
 - `packages/kits/LocusKit/rust/src/tunnel.rs`: 1 line(s)
 - `packages/kits/LocusKit/rust/src/tunnel_operational.rs`: 3 line(s)
 - `packages/kits/LocusKit/rust/src/vocabulary.rs`: 1 line(s)
@@ -219,7 +219,7 @@ Removed internal/process comment lines:
 - `packages/kits/VectorKit/Sources/VectorKit/Engine/FloatBruteForceIndex.swift`: 1 line(s)
 - `packages/kits/VectorKit/Sources/VectorKit/Engine/VectorRecordKey.swift`: 1 line(s)
 - `packages/kits/VectorKit/Sources/VectorKit/FloatSimHashEmbeddingProvider.swift`: 1 line(s)
-- `packages/kits/VectorKit/Sources/VectorKit/VectorStore.swift`: 6 line(s)
+- `packages/kits/VectorKit/Sources/VectorKit/VectorStore.swift`: 5 line(s)
 - `packages/kits/VectorKit/Tests/VectorKitTests/BruteForceIndexTests.swift`: 1 line(s)
 - `packages/kits/VectorKit/Tests/VectorKitTests/CapturePathBenchmarkTests.swift`: 4 line(s)
 - `packages/kits/VectorKit/Tests/VectorKitTests/FloatBruteForceIndexTests.swift`: 1 line(s)
@@ -238,7 +238,7 @@ Removed internal/process comment lines:
 - `packages/kits/VectorKit/rust/src/engine/mod.rs`: 1 line(s)
 - `packages/kits/VectorKit/rust/src/lib.rs`: 1 line(s)
 - `packages/kits/VectorKit/rust/src/simhash_embedding_provider.rs`: 1 line(s)
-- `packages/kits/VectorKit/rust/src/vector_store.rs`: 14 line(s)
+- `packages/kits/VectorKit/rust/src/vector_store.rs`: 13 line(s)
 - `packages/kits/VectorKit/rust/tests/bulk_ingest_tests.rs`: 2 line(s)
 - `packages/kits/VectorKit/rust/tests/int8_reject_tests.rs`: 1 line(s)
 
