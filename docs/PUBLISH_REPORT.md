@@ -2,7 +2,7 @@
 # Publish Report
 
 Venue: `moot-memory`
-Source commit: `16578bb9b6f1f2b63e49d6d5141a50596ee5655d`
+Source commit: `81636c9a67375dd4bd073f006aefa5c3fd6582d2`
 
 ## Loaded Packages
 
@@ -120,8 +120,8 @@ Removed internal/process comment lines:
 - `packages/kits/LocusKit/Sources/LocusKit/DrawerFingerprint.swift`: 3 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/DrawerOperational.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/DrawerStateValidator.swift`: 1 line(s)
-- `packages/kits/LocusKit/Sources/LocusKit/DrawerStore.swift`: 7 line(s)
-- `packages/kits/LocusKit/Sources/LocusKit/Estate.swift`: 10 line(s)
+- `packages/kits/LocusKit/Sources/LocusKit/DrawerStore.swift`: 9 line(s)
+- `packages/kits/LocusKit/Sources/LocusKit/Estate.swift`: 12 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/EstateAudit.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/EstateTypes.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/EstateVerbs.swift`: 21 line(s)
@@ -158,7 +158,7 @@ Removed internal/process comment lines:
 - `packages/kits/LocusKit/Tests/LocusKitTests/LineageTests.swift`: 1 line(s)
 - `packages/kits/LocusKit/Tests/LocusKitTests/LocusKitTelemetryTests.swift`: 1 line(s)
 - `packages/kits/LocusKit/Tests/LocusKitTests/LocusKitVocabularyTests.swift`: 1 line(s)
-- `packages/kits/LocusKit/Tests/LocusKitTests/MutateMutationKindTests.swift`: 1 line(s)
+- `packages/kits/LocusKit/Tests/LocusKitTests/MutateMutationKindTests.swift`: 3 line(s)
 - `packages/kits/LocusKit/Tests/LocusKitTests/NodeTestSkeleton.swift`: 2 line(s)
 - `packages/kits/LocusKit/Tests/LocusKitTests/ProvenanceTests.swift`: 1 line(s)
 - `packages/kits/LocusKit/Tests/LocusKitTests/RecallInternalReadFailureTests.swift`: 1 line(s)
@@ -186,10 +186,10 @@ Removed internal/process comment lines:
 - `packages/kits/LocusKit/rust/src/drawer_operational.rs`: 7 line(s)
 - `packages/kits/LocusKit/rust/src/drawer_state_validator.rs`: 1 line(s)
 - `packages/kits/LocusKit/rust/src/drawer_store.rs`: 18 line(s)
-- `packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs`: 31 line(s)
+- `packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs`: 33 line(s)
 - `packages/kits/LocusKit/rust/src/error.rs`: 2 line(s)
 - `packages/kits/LocusKit/rust/src/estate.rs`: 10 line(s)
-- `packages/kits/LocusKit/rust/src/estate_verbs.rs`: 34 line(s)
+- `packages/kits/LocusKit/rust/src/estate_verbs.rs`: 36 line(s)
 - `packages/kits/LocusKit/rust/src/filter.rs`: 2 line(s)
 - `packages/kits/LocusKit/rust/src/fingerprint256_adapters.rs`: 1 line(s)
 - `packages/kits/LocusKit/rust/src/forbidden_combination_validator.rs`: 1 line(s)

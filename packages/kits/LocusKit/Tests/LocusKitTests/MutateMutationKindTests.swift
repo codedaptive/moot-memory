@@ -526,4 +526,22 @@ struct MutateMutationKindTests {
             Issue.record("expected .drawerNotFound, got \(String(describing: thrown))")
         }
     }
+
+    /// promotes a drawer to userConfirmed, so the confirm path must be bound
+    /// to an EXISTING drawer — a non-drawer / unknown rowID (e.g. a KGFact or
+    /// Tunnel id smuggled in) must be refused, never silently confirmed. The
+    /// storage-layer `getDrawer` guard enforces this noun binding; this test
+    /// `mutate_confirm_missing_row_returns_not_found`.
+    @Test(".confirm on a missing/non-drawer row throws drawerNotFound")
+    func confirm_missingRow_throwsNotFound() async throws {
+        let estate = try await makeEstate()
+        let thrown = await #expect(throws: LocusKitError.self) {
+            try await estate.mutate(rowID: "no-such-id", kind: .confirm)
+        }
+        if case .drawerNotFound? = thrown {
+            // Correct: confirm is drawer-bound; a non-drawer id cannot be confirmed.
+        } else {
+            Issue.record("expected .drawerNotFound, got \(String(describing: thrown))")
+        }
+    }
 }
