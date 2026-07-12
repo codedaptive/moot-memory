@@ -14,24 +14,24 @@ name = "corpus_kit"
 path = "src/lib.rs"
 
 [dependencies]
-substrate-types = { package = "substrate-types", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.29" }
+substrate-types = { package = "substrate-types", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.30" }
 # SubstrateLib: MerkleHash::leaf for the ContentHashProvider callback
 # that HashingRowStore invokes on every chunk insert (ADR-017 §16).
 # Authority: DECISION_LIFT_PACKAGE_SWIFT_RULE_2026-05-28 + ADR-017 §19.
-substrate-lib = { package = "substrate-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.29" }
+substrate-lib = { package = "substrate-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.30" }
 # SubstrateKernel: sha256::hash for deterministic corpus UUID derivation,
 # used by the HashParentChainProvider (chunk → corpus parent chain).
-substrate-kernel = { package = "substrate-kernel", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.29" }
+substrate-kernel = { package = "substrate-kernel", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.30" }
 # B2-5: the named EmbeddingModelConfig cases (MiniLM/MPNet/EmbeddingGemma)
 # project pooled vectors through substrate_ml::float_simhash::project — the
 # conformance-gated, bit-identical Swift/Rust SimHash. The Swift CorpusKit
 # core target carries the matching SubstrateML dependency for the same
 # CorpusTextProvider projection; this is the parity addition. Layering is
-substrate-ml = { package = "substrate-ml", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.29" }
-engram-lib = { package = "engram-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.29" }
-eidetic-lib = { package = "eidetic-lib", git = "https://github.com/codedaptive/moot-semantics", tag = "v1.0.29" }
-persistence-kit = { package = "persistence-kit", git = "https://github.com/codedaptive/moot-system", tag = "v1.0.29" }
-convergence-kit = { package = "convergence-kit", git = "https://github.com/codedaptive/moot-system", tag = "v1.0.29" }
+substrate-ml = { package = "substrate-ml", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.30" }
+engram-lib = { package = "engram-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.30" }
+eidetic-lib = { package = "eidetic-lib", git = "https://github.com/codedaptive/moot-semantics", tag = "v1.0.30" }
+persistence-kit = { package = "persistence-kit", git = "https://github.com/codedaptive/moot-system", tag = "v1.0.30" }
+convergence-kit = { package = "convergence-kit", git = "https://github.com/codedaptive/moot-system", tag = "v1.0.30" }
 vectorkit = { path = "../../VectorKit/rust" }
 # QueueKit: CorpusKit owns its own ingest queue + drain worker pool, so it
 # mounts a QueueKit-backed encode queue (transient in-memory PersistenceKit
@@ -41,13 +41,13 @@ vectorkit = { path = "../../VectorKit/rust" }
 # (substrate-types + persistence-kit + intellectus-lib); corpus-kit → queuekit
 # is downstream→upstream, no inversion.
 # Per DECISION_LIFT_PACKAGE_SWIFT_RULE_2026-05-28 (Rust no-inversion rule).
-queuekit = { package = "queuekit", git = "https://github.com/codedaptive/moot-system", tag = "v1.0.29", features = ["persistencekit"] }
+queuekit = { package = "queuekit", git = "https://github.com/codedaptive/moot-system", tag = "v1.0.30", features = ["persistencekit"] }
 # IntellectusLib: zero-dependency telemetry leaf. Added for P2
 # self-report coverage (cp-corpuskit-report). When monitoring is
 # disabled (the default), the report! macro expands to a single
 # AtomicBool::load + branch — zero allocation, no clock.
 # Layering-safe: intellectus-lib depends only on std.
-intellectus-lib = { package = "intellectus-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.29" }
+intellectus-lib = { package = "intellectus-lib", git = "https://github.com/codedaptive/moot-core", tag = "v1.0.30" }
 uuid = { version = "1", features = ["v4", "v5", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
