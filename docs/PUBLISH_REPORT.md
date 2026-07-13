@@ -2,7 +2,7 @@
 # Publish Report
 
 Venue: `moot-memory`
-Source commit: `58d01422706e2ac88e5d0d1904a9860435bbd8cc`
+Source commit: `88a99fed625877d7037404a6e15ab852950fa195`
 
 ## Loaded Packages
 
@@ -84,7 +84,7 @@ Removed internal/process comment lines:
 - `packages/kits/CorpusKit/rust/src/bundle_store.rs`: 4 line(s)
 - `packages/kits/CorpusKit/rust/src/chunk.rs`: 1 line(s)
 - `packages/kits/CorpusKit/rust/src/chunker.rs`: 1 line(s)
-- `packages/kits/CorpusKit/rust/src/corpus.rs`: 60 line(s)
+- `packages/kits/CorpusKit/rust/src/corpus.rs`: 61 line(s)
 - `packages/kits/CorpusKit/rust/src/corpus_ingest_queue.rs`: 38 line(s)
 - `packages/kits/CorpusKit/rust/src/engine/inverted_index_store.rs`: 3 line(s)
 - `packages/kits/CorpusKit/rust/src/engine/mod.rs`: 1 line(s)
@@ -114,13 +114,14 @@ Removed internal/process comment lines:
 - `packages/kits/LocusKit/Sources/LocusKit/BitmapOps.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/BundleMaterializer.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/ContainerFingerprintStore.swift`: 1 line(s)
+- `packages/kits/LocusKit/Sources/LocusKit/DatasetHandle.swift`: 7 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/DiaryEntry.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/DiaryOperational.swift`: 2 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/Drawer.swift`: 2 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/DrawerFingerprint.swift`: 3 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/DrawerOperational.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/DrawerStateValidator.swift`: 1 line(s)
-- `packages/kits/LocusKit/Sources/LocusKit/DrawerStore.swift`: 9 line(s)
+- `packages/kits/LocusKit/Sources/LocusKit/DrawerStore.swift`: 11 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/Estate.swift`: 12 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/EstateAudit.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/EstateTypes.swift`: 1 line(s)
@@ -180,20 +181,21 @@ Removed internal/process comment lines:
 - `packages/kits/LocusKit/rust/src/capture_tunnel_tests.rs`: 1 line(s)
 - `packages/kits/LocusKit/rust/src/container_fingerprint_coverage_tests.rs`: 2 line(s)
 - `packages/kits/LocusKit/rust/src/container_fingerprint_store.rs`: 1 line(s)
+- `packages/kits/LocusKit/rust/src/dataset_handle.rs`: 5 line(s)
 - `packages/kits/LocusKit/rust/src/diary_operational.rs`: 2 line(s)
 - `packages/kits/LocusKit/rust/src/drawer.rs`: 3 line(s)
 - `packages/kits/LocusKit/rust/src/drawer_fingerprint.rs`: 5 line(s)
 - `packages/kits/LocusKit/rust/src/drawer_operational.rs`: 7 line(s)
 - `packages/kits/LocusKit/rust/src/drawer_state_validator.rs`: 1 line(s)
-- `packages/kits/LocusKit/rust/src/drawer_store.rs`: 18 line(s)
+- `packages/kits/LocusKit/rust/src/drawer_store.rs`: 19 line(s)
 - `packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs`: 33 line(s)
-- `packages/kits/LocusKit/rust/src/error.rs`: 2 line(s)
+- `packages/kits/LocusKit/rust/src/error.rs`: 3 line(s)
 - `packages/kits/LocusKit/rust/src/estate.rs`: 10 line(s)
-- `packages/kits/LocusKit/rust/src/estate_verbs.rs`: 36 line(s)
+- `packages/kits/LocusKit/rust/src/estate_verbs.rs`: 44 line(s)
 - `packages/kits/LocusKit/rust/src/filter.rs`: 2 line(s)
 - `packages/kits/LocusKit/rust/src/fingerprint256_adapters.rs`: 1 line(s)
 - `packages/kits/LocusKit/rust/src/forbidden_combination_validator.rs`: 1 line(s)
-- `packages/kits/LocusKit/rust/src/frames.rs`: 10 line(s)
+- `packages/kits/LocusKit/rust/src/frames.rs`: 11 line(s)
 - `packages/kits/LocusKit/rust/src/kg_fact.rs`: 4 line(s)
 - `packages/kits/LocusKit/rust/src/kg_fact_operational.rs`: 1 line(s)
 - `packages/kits/LocusKit/rust/src/learned_reference_tests.rs`: 1 line(s)
@@ -206,7 +208,7 @@ Removed internal/process comment lines:
 - `packages/kits/LocusKit/rust/src/recall_stream.rs`: 4 line(s)
 - `packages/kits/LocusKit/rust/src/schema.rs`: 11 line(s)
 - `packages/kits/LocusKit/rust/src/tunnel.rs`: 1 line(s)
-- `packages/kits/LocusKit/rust/src/tunnel_operational.rs`: 3 line(s)
+- `packages/kits/LocusKit/rust/src/tunnel_operational.rs`: 4 line(s)
 - `packages/kits/LocusKit/rust/src/vocabulary.rs`: 1 line(s)
 - `packages/kits/LocusKit/rust/tests/drawer_store_sqlite.rs`: 3 line(s)
 - `packages/kits/LocusKit/rust/tests/locuskit_telemetry_tests.rs`: 7 line(s)
@@ -226,7 +228,7 @@ Removed internal/process comment lines:
 - `packages/kits/VectorKit/Tests/VectorKitTests/FloatSimHashEmbeddingProviderTests.swift`: 1 line(s)
 - `packages/kits/VectorKit/Tests/VectorKitTests/MIHIndexTests.swift`: 1 line(s)
 - `packages/kits/VectorKit/Tests/VectorKitTests/VectorKitInt8RejectTests.swift`: 1 line(s)
-- `packages/kits/VectorKit/Tests/VectorKitTests/VectorKitTelemetryTests.swift`: 1 line(s)
+- `packages/kits/VectorKit/Tests/VectorKitTests/VectorKitTelemetryTests.swift`: 2 line(s)
 - `packages/kits/VectorKit/Tests/VectorKitTests/VectorStoreTests.swift`: 2 line(s)
 - `packages/kits/VectorKit/docs/INTERFACE_DOCTRINE.md`: 1 line(s)
 - `packages/kits/VectorKit/rust/Cargo.toml`: 1 line(s)
@@ -241,6 +243,7 @@ Removed internal/process comment lines:
 - `packages/kits/VectorKit/rust/src/vector_store.rs`: 13 line(s)
 - `packages/kits/VectorKit/rust/tests/bulk_ingest_tests.rs`: 2 line(s)
 - `packages/kits/VectorKit/rust/tests/int8_reject_tests.rs`: 1 line(s)
+- `packages/kits/VectorKit/rust/tests/vector_store_tests.rs`: 2 line(s)
 
 ## Dependency Rewrites
 

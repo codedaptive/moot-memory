@@ -87,7 +87,7 @@ public extension Estate {
 
         // Operational bitmap assembly:
         //   bits 0–5   capture_channel (contiguous raw 0…5)
-        //   bits 6–11  content_kind    (contiguous raw 0…6)
+        //   bits 6–11  content_kind    (contiguous raw 0…7)
         //   bits 12–23 feature_flags   (OptionSet bitset, cookbook §2.4)
         // Per DrawerOperational.swift / spec § 5.6.
         // F18 atomic centralization: compose via BitField.writeField rather
@@ -429,7 +429,10 @@ public extension Estate {
     /// everywhere — stale set bits are a harmless over-approximation
     /// (spec § 11.5 / ContainerFingerprintStore header). Tightening is
     /// done by `containerFP.rebuildAll` at estate open.
-    private func addDrawerCovered(_ drawer: Drawer, now: Date) async throws {
+    // Internal rather than private so extensions in other LocusKit source files
+    // (e.g. DatasetHandle.swift) can call this without duplicating the container-
+    // fingerprint OR-in logic. Access stays module-internal; no public API change.
+    func addDrawerCovered(_ drawer: Drawer, now: Date) async throws {
         try await store.addDrawer(drawer, now: now)
         // Resolve wing/room display names from the node tree for the
         // container fingerprint aggregate.
@@ -505,15 +508,20 @@ public extension Estate {
         }
 
         let now = Date()
-        // Encode originClass into bits 6–8 of the tunnel operational bitmap.
-        // The decoder (`Tunnel.originClass` in TunnelOperational.swift) uses
-        // `BitField.extractField(operationalBitmap, shift:6, width:3)`, so
-        // this write is the exact inverse. Default `.userExplicit` (raw 0)
-        // produces 0, preserving byte-identical all-zero defaults for
-        // existing callers (spec § 5.6 / cookbook §2.4).
-        let opBitmap = BitField.writeField(
+        // Encode originClass into bits 6–8 and lifecycle into bits 3–5 of
+        // the tunnel operational bitmap. The decoders (`Tunnel.originClass`
+        // / `Tunnel.lifecycle` in TunnelOperational.swift) use
+        // `BitField.extractField` with the same shift/width, so these
+        // writes are the exact inverse. Defaults (`.userExplicit`,
+        // `.active` — both raw 0) produce 0, preserving byte-identical
+        // all-zero bitmaps for existing callers (spec § 5.6 / cookbook §2.4).
+        var opBitmap = BitField.writeField(
             Int64(frame.originClass.rawValue),
             into: 0, shift: 6, width: 3
+        )
+        opBitmap = BitField.writeField(
+            Int64(frame.lifecycle.rawValue),
+            into: opBitmap, shift: 3, width: 3
         )
         let tunnel = Tunnel(
             id: UUID().uuidString,
@@ -540,6 +548,21 @@ public extension Estate {
             ts: now.timeIntervalSince1970
         ))
         return tunnel
+    }
+
+    /// Review a `.proposed` tunnel: accept → `.active`, reject → `.withdrawn`.
+    /// Estate-level surface over `DrawerStore.respondToTunnel` — the review
+    /// verb the ARIA `moot_review_tunnel` tool and the dreaming pipeline call.
+    /// See the store method for the lifecycle guard and audit contract.
+    func respondToTunnel(
+        id: String,
+        accept: Bool,
+        changedBy: String,
+        reason: String? = nil,
+        now: Date = Date()
+    ) async throws {
+        try await store.respondToTunnel(
+            id: id, accept: accept, changedBy: changedBy, reason: reason, now: now)
     }
 
     /// Internal test peek used to verify a captured tunnel after a verb

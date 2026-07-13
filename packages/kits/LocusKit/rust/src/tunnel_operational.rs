@@ -320,6 +320,21 @@ impl Tunnel {
         copy.operational_bitmap &= !Self::IS_RETIRED_BIT;
         copy
     }
+
+    /// Return a copy of this tunnel with lifecycle bits 3–5 rewritten to
+    /// `lifecycle`. Used by `DrawerStore::respond_to_tunnel` to move a
+    /// `Proposed` tunnel to `Active` (accepted) or `Withdrawn` (rejected).
+    /// The caller is responsible for persisting the updated bitmap.
+    pub fn with_lifecycle(&self, lifecycle: TunnelLifecycle) -> Tunnel {
+        let mut copy = self.clone();
+        copy.operational_bitmap = substrate_kernel::bit_field::write_field(
+            lifecycle.raw_value(),
+            copy.operational_bitmap,
+            3,
+            3,
+        );
+        copy
+    }
 }
 
 // MARK: - Tunnel provenance accessors
