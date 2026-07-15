@@ -2,7 +2,7 @@
 # Publish Report
 
 Venue: `moot-memory`
-Source commit: `88a99fed625877d7037404a6e15ab852950fa195`
+Source commit: `6fe29be84ff7ccdae2aaa0dcffb78ecada6076cb`
 
 ## Loaded Packages
 
@@ -134,7 +134,7 @@ Removed internal/process comment lines:
 - `packages/kits/LocusKit/Sources/LocusKit/LearnedReference.swift`: 3 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/LearnedReferenceOperational.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/LocusKitError.swift`: 2 line(s)
-- `packages/kits/LocusKit/Sources/LocusKit/LocusKitSchema.swift`: 7 line(s)
+- `packages/kits/LocusKit/Sources/LocusKit/LocusKitSchema.swift`: 6 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/LocusKitVocabulary.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/MerkleRollup.swift`: 1 line(s)
 - `packages/kits/LocusKit/Sources/LocusKit/NodeBundleStore.swift`: 1 line(s)
