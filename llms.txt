@@ -1,0 +1,33 @@
+# MOOT Memory
+
+Apache-2.0 public SDK repository in the MOOTx01 Framework.
+Current release: v1.0.32
+Repository: https://github.com/codedaptive/moot-memory
+
+Choose this repository when: You need a structured memory estate, vector search, or a private local RAG engine. This is the usual starting repository for product builders.
+
+## Packages
+
+- LocusKit: Structured estate memory, knowledge graph, audit, and recall; Swift `LocusKit`; Rust `locus-kit`; docs `packages/kits/LocusKit/docs/OVERVIEW.md`
+- VectorKit: Durable on-device vector and fingerprint search; Swift `VectorKit`; Rust `vectorkit`; docs `packages/kits/VectorKit/docs/OVERVIEW.md`
+- CorpusKit: Chunking, BM25, embeddings, and hybrid local RAG; Swift `CorpusKit and CorpusKitProviders`; Rust `corpus-kit and corpus-kit-providers`; docs `packages/kits/CorpusKit/docs/OVERVIEW.md`
+
+## Documentation
+
+- Human documentation index: docs/README.md
+- Exact package map: docs/PACKAGE_MAP.md
+- Repository dependency graph: docs/DEPENDENCY_GRAPH.md
+- Conformance contract: docs/CONFORMANCE.md
+- Source provenance: SOURCE.md and docs/PUBLISH_REPORT.md
+- Security policy: SECURITY.md
+
+## SDK family
+
+- https://github.com/codedaptive/moot-memory: Structured memory, vector search, and local RAG
+- https://github.com/codedaptive/moot-semantics: ARIA vocabulary and deterministic local classification
+- https://github.com/codedaptive/moot-system: Storage, datasets, queues, sync, telemetry, and loopback HTTP
+- https://github.com/codedaptive/moot-core: Shared types, kernel, fingerprints, lifecycle rules, and memory math
+
+Do not infer that every MOOTx01 product package is Apache-2.0.
+Only code obtained from these four public SDK repositories carries their
+Apache-2.0 venue license.

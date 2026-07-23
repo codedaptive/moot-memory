@@ -2,8 +2,8 @@
 doc: OVERVIEW
 package: LocusKit
 repo: moot-memory
-authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
-authored_date: 2026-07-07
+authored_commit: daa855b9e43c6978d8481561f1e073533059735b
+authored_date: 2026-07-23
 sources:
   - path: Sources/LocusKit/Adjectives.swift
     blob: d95d3ad8b02c61b166be790138b710b595f30c3d
@@ -32,13 +32,13 @@ sources:
   - path: Sources/LocusKit/DrawerFingerprint.swift
     blob: 30bf6bf545f1699c1a5f7f31053ce77e65508b06
   - path: Sources/LocusKit/DrawerOperational.swift
-    blob: 26588caeb8b69f8ebb9973eac35216b957a1461c
+    blob: d3da4b100ba5a9a3d4511fc78fd6dba5efdb0a0f
   - path: Sources/LocusKit/DrawerStateValidator.swift
     blob: 0fcc6d5affd39342d2263c841c5fd67894b7f163
   - path: Sources/LocusKit/DrawerStore.swift
-    blob: b8241ac78713ae087cf67fdd5f012310eda90e76
+    blob: 71343870973a463961c089c05de9a55412730ab5
   - path: Sources/LocusKit/Estate.swift
-    blob: 40fab998a8eca155c749460190cca0c31cf3098c
+    blob: 96cfaf24d9a52c11c5199fd567d897640ccd1b9a
   - path: Sources/LocusKit/EstateAudit.swift
     blob: f17f901ea714fee7b7c2a6b8dc3c18e6684586d8
   - path: Sources/LocusKit/EstateIdentityKeyStore.swift
@@ -46,7 +46,7 @@ sources:
   - path: Sources/LocusKit/EstateTypes.swift
     blob: 9afca8d07eee38ac8f0ad12fcb26aec4f732c1e8
   - path: Sources/LocusKit/EstateVerbs.swift
-    blob: ae30cf0be732d3b68bdb94e0193fd37171def37b
+    blob: ce68fa4cbb672a4cf24a7ea175b1b4c82305b723
   - path: Sources/LocusKit/Filter.swift
     blob: 4260cd963863bbc6f31f87d7f037e92ae7d95e16
   - path: Sources/LocusKit/Fingerprint256Adapters.swift
@@ -54,7 +54,7 @@ sources:
   - path: Sources/LocusKit/ForbiddenCombinationValidator.swift
     blob: 809c5fdf1e7a6bcc219b9410f6f247eec65b275d
   - path: Sources/LocusKit/Frames.swift
-    blob: fea5a8d8a487cc28ef967941eab8929b1d2b44df
+    blob: f66e7e5c2103f150a4ee03bb6f1d3e01061598b1
   - path: Sources/LocusKit/KGFact.swift
     blob: 3d018021557fa23cdce8aa803cd99ce6be109ccd
   - path: Sources/LocusKit/KGFactOperational.swift
@@ -66,13 +66,13 @@ sources:
   - path: Sources/LocusKit/LocusKit.swift
     blob: f201f00a27e2b906a0fc1502bfdef55282844119
   - path: Sources/LocusKit/LocusKitError.swift
-    blob: cf9ea82e072c56c69fb2e88a62c1835391a3768e
+    blob: 13ed8aa56fb91dec378f0ad116f48fe3df6f271b
   - path: Sources/LocusKit/LocusKitSchema.swift
-    blob: a5d3c65a1f6f81bd06a884eb106edb6afe5cfd39
+    blob: bc8317bd50c24850f4e45ccb444f164d616b9d72
   - path: Sources/LocusKit/LocusKitTelemetry.swift
     blob: 732f995c52e8af16477f34243b5d898080cec7da
   - path: Sources/LocusKit/LocusKitVocabulary.swift
-    blob: 8d207c675d5487931127b5fb34380a832df2c025
+    blob: 201186c9a525f129bc4a9daaeecba1400575e282
   - path: Sources/LocusKit/Manifest.swift
     blob: 206d4ce171a49d96512f68e6398746edcc2ea13a
   - path: Sources/LocusKit/MerkleRollup.swift
@@ -100,7 +100,9 @@ sources:
   - path: Sources/LocusKit/Tunnel.swift
     blob: 8b1590668c930fb0e03eb2e89d2c31cd3d66c34b
   - path: Sources/LocusKit/TunnelOperational.swift
-    blob: a5b9b8d3b5b7990ebcb9d9c6209564a7307aa13e
+    blob: b58de521d2a2e7cf3b8839359cc7624d32fd9b30
+  - path: Sources/LocusKit/DatasetHandle.swift
+    blob: 196e7250abbe2ae3d1ab88b6320d1dee3d9b3855
 ---
 
 # LocusKit Overview
@@ -115,6 +117,15 @@ They do not recompute every drawer.
 The release adds bounded active drawer paging.
 `activeDrawersAfter` lets GLK walk the drawer table in cursor pages.
 Tunnels inherit the highest sensitivity of their endpoints.
+
+Dataset handles are now first-class drawers.
+They link estate belief state to a typed `DatasetStore` table.
+The handle records schema, row count, source, and optional signatures.
+Deleting a handle can cascade to its backing dataset.
+
+Active tunnel reads now exclude proposed and withdrawn edges.
+Tunnel reads apply the same sensitivity ceiling as drawer recall.
+Duplicate associations are ignored by stable endpoint identity.
 
 ## What This Kit Does
 
@@ -141,6 +152,11 @@ The word `MemPalace` names the spatial metaphor LocusKit implements.
 Content lives in drawers. Drawers sit in rooms. Rooms sit in wings.
 Wings sit in one estate. This document calls that three-level
 structure the containment tree.
+
+A dataset handle uses an ordinary drawer with content kind `dataset`.
+Its JSON content points to a table owned by PersistenceKit.
+The drawer keeps belief, provenance, sensitivity, and audit behavior.
+The table keeps typed rows and column statistics.
 
 ## The Problem It Solves
 

@@ -3,19 +3,19 @@
 doc: topology
 package: CorpusKit
 repo: moot-memory
-authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
-authored_date: 2026-07-07
+authored_commit: daa855b9e43c6978d8481561f1e073533059735b
+authored_date: 2026-07-23
 sources:
   - path: Sources/CorpusKit/CorpusKit.swift
-    blob: dfa3b8a046f6c1c03ea03e7b92ba6b0bd7c8f1b5
+    blob: 8b2ed79ae37e3e851790f4ae89ca46d68b1a0d98
   - path: Sources/CorpusKit/CorpusIngestQueue.swift
-    blob: 4dd3bd8eefb8e0e7dd474793d35acbe03b452df3
+    blob: daa78d91bf2ec9aaf3a7832d2eabc0b8b21be80c
   - path: Sources/CorpusKit/Chunker.swift
     blob: a2718e06d1715f539ff633e7037c70e10ecb7a2d
   - path: Sources/CorpusKit/BundleStore.swift
     blob: 419b1c0609597cdd68bf623ed37bd40a0171597b
   - path: Sources/CorpusKit/Engine/InvertedIndexStore.swift
-    blob: e1852f2ed585a0ca1047fbcaa0880fd0bb8aa596
+    blob: d90491e5bc4b61548a1c95f263893be1b6ac4e2c
   - path: Sources/CorpusKit/BasisStore.swift
     blob: 48850906faa7c2fe4aac2859a1c4e892cff32cab
   - path: Sources/CorpusKit/HybridRecall.swift

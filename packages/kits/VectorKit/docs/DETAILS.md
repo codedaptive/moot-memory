@@ -2,8 +2,8 @@
 doc: DETAILS
 package: VectorKit
 repo: moot-memory
-authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
-authored_date: 2026-07-07
+authored_commit: daa855b9e43c6978d8481561f1e073533059735b
+authored_date: 2026-07-23
 sources:
   - path: Sources/VectorKit/EmbeddingProvider.swift
     blob: ad2bf52732b46960b9357a01fea37254d1681561
@@ -16,15 +16,15 @@ sources:
   - path: Sources/VectorKit/Engine/DenseMetric.swift
     blob: a28578e73ec36943a73d067e7768782311fa2005
   - path: Sources/VectorKit/Engine/FloatBruteForceIndex.swift
-    blob: eb5e2cd5f09e67f0f3a87bddb0909cadf1420bdc
+    blob: 088244412fb39500ee6b6c4f886bbaf9bd8e002b
   - path: Sources/VectorKit/Engine/MaxSimScorer.swift
     blob: 91875a79b8f6eebf6a2fd0a3a9dde85311a50aae
   - path: Sources/VectorKit/Engine/MIHIndex.swift
     blob: 61e283122542218eaf1f057cd7b9f1022930956f
   - path: Sources/VectorKit/Engine/ResidentArrayStore.swift
-    blob: 28f87a58d405f4b6fd9c9e7794c89ab00d3d1e66
+    blob: fc1cf7aef20ea0fca60ecb09d218b3d463680b50
   - path: Sources/VectorKit/Engine/ResidentVectorArray.swift
-    blob: e913426ea4ce36473e53ee71007cf1d9e83904f3
+    blob: 5691ac4c1d40ae01d8d6cf6e832dde88e5afdba5
   - path: Sources/VectorKit/Engine/VectorPayload.swift
     blob: 9259b4db9380cf9d854abd84a1d5059a0fcff5ec
   - path: Sources/VectorKit/Engine/VectorRecordKey.swift
@@ -40,7 +40,7 @@ sources:
   - path: Sources/VectorKit/VectorMatch.swift
     blob: 24cc2c1bd25f71a7cef60a043c3a640df2368a23
   - path: Sources/VectorKit/VectorStore.swift
-    blob: 1e1cdaf096e4f61e10ad35956c3f5478b3f90110
+    blob: 781ee2c4afb60b4b5e9b920ef0b8722529c990eb
 ---
 
 # VectorKit Details
@@ -56,6 +56,15 @@ The default float search path scans the `vectors` table for one model.
 It computes cosine distance row by row.
 The `ramResident` hint still uses `FloatBruteForceIndex`.
 `replaceModelVectors` now rejects int8 payloads before it changes the table.
+
+Schema v4 adds the `(filed_at, item_id)` covering index.
+`recentItemIDs` pages newest rows and returns distinct item IDs.
+This replaces UUID-order probing for bounded background sweeps.
+
+Disk-backed nearest search keeps a bounded top list.
+Nearest direction keeps the smallest distances.
+Farthest direction keeps the largest distances.
+Both paths use deterministic key order for ties.
 
 This document walks through every source file in the package. Read
 `OVERVIEW.md` first for the big picture. Files appear here in pipeline

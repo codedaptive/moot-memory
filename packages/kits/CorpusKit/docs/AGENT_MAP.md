@@ -2,8 +2,8 @@
 doc: AGENT_MAP
 package: CorpusKit
 repo: moot-memory
-authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
-authored_date: 2026-07-07
+authored_commit: daa855b9e43c6978d8481561f1e073533059735b
+authored_date: 2026-07-23
 sources:
   - path: Sources/CorpusKit/BasisStore.swift
     blob: 48850906faa7c2fe4aac2859a1c4e892cff32cab
@@ -16,9 +16,9 @@ sources:
   - path: Sources/CorpusKit/Chunker.swift
     blob: a2718e06d1715f539ff633e7037c70e10ecb7a2d
   - path: Sources/CorpusKit/CorpusIngestQueue.swift
-    blob: 4dd3bd8eefb8e0e7dd474793d35acbe03b452df3
+    blob: daa78d91bf2ec9aaf3a7832d2eabc0b8b21be80c
   - path: Sources/CorpusKit/CorpusKit.swift
-    blob: dfa3b8a046f6c1c03ea03e7b92ba6b0bd7c8f1b5
+    blob: 8b2ed79ae37e3e851790f4ae89ca46d68b1a0d98
   - path: Sources/CorpusKit/CorpusKitError.swift
     blob: 68ac8d0a248bc9c2dd1885b0bc531ac4ed9cb91d
   - path: Sources/CorpusKit/CorpusProviderCountsStore.swift
@@ -30,7 +30,7 @@ sources:
   - path: Sources/CorpusKit/Engine/InvertedIndex.swift
     blob: 1273adcb3794b1997c93488182fc5ed95b21f9ec
   - path: Sources/CorpusKit/Engine/InvertedIndexStore.swift
-    blob: e1852f2ed585a0ca1047fbcaa0880fd0bb8aa596
+    blob: d90491e5bc4b61548a1c95f263893be1b6ac4e2c
   - path: Sources/CorpusKit/Engine/SparseTypes.swift
     blob: 54654e2c49b09d31f60c06503216a2b281939f87
   - path: Sources/CorpusKit/HybridRecall.swift
@@ -42,7 +42,7 @@ sources:
   - path: Sources/CorpusKit/Tokenizer.swift
     blob: 603028510f91b3c6d75cdda1cb0a1db1c59eee28
   - path: Sources/CorpusKit/TrainableEmbeddingBasis.swift
-    blob: 4722def84980b3a8987adb090a1a702ac789f8ab
+    blob: 2815f34febe771401786ce02b63078333bdd52a7
   - path: Sources/CorpusKitProviders/BasisCodec.swift
     blob: d107e1efd6341648fd8f717c7956a15b98c1b29f
   - path: Sources/CorpusKitProviders/DefaultEnsemble.swift
@@ -54,7 +54,7 @@ sources:
   - path: Sources/CorpusKitProviders/FdcProvider.swift
     blob: 96f3ffaf64c7b17e2f617f49ce06cd649e70a027
   - path: Sources/CorpusKitProviders/LsaProvider.swift
-    blob: 3870f0d24659cb27ba13dc2cba9f94debb6b5c07
+    blob: b59af7ad776fc23fa2fd30572166eb6f3858d17a
   - path: Sources/CorpusKitProviders/MiniLMTextProvider.swift
     blob: 35c739a37e9ef1a92098458b48c5f5a06f11050f
   - path: Sources/CorpusKitProviders/MPNetTextProvider.swift
@@ -64,11 +64,11 @@ sources:
   - path: Sources/CorpusKitProviders/NLEmbeddingProvider.swift
     blob: 2d714a051a1b6bd4dbde1ecd0e182a81f94b7008
   - path: Sources/CorpusKitProviders/NmfProvider.swift
-    blob: 43f0e339a42426d68788a03e8a216890c73eb05a
+    blob: fc03ae09c6416b58062b36e19e2314f872712427
   - path: Sources/CorpusKitProviders/PpmiProvider.swift
-    blob: 282e2185cb7e3d066979ea23b74e096ee337545b
+    blob: e7f5d78aabd71f531052e479a2d948de93dacafc
   - path: Sources/CorpusKitProviders/RandomIndexingProvider.swift
-    blob: 552b55b1be93fb57b9e7daf123ecf3a73df7abef
+    blob: bdf5ebea620a882d284e08e3ea88e336eeda4715
   - path: Sources/CorpusKitProviders/ReducedVocab.swift
     blob: fb50a8566f9ef3b2a9c650102274b20894d6542d
   - path: Sources/CorpusKitProviders/TermDocumentCounts.swift
@@ -94,6 +94,11 @@ ENTRY POINTS (most callers need only these):
 - DefaultEnsemble.swift:62 `CorpusEnsemble.defaultEnsemble() -> [EmbeddingModel]` : the five production signals, fresh per estate
 
 ## Symbol Table
+
+- CorpusKit.swift `sourceIDs(forChunkIDs:)`: warm chunk-to-source lookup used to map vector hits back to drawers.
+- CorpusIngestQueue.swift `dropIngestQueue()`: cancels and awaits workers before queue lease release.
+- InvertedIndexStore.swift dirty generation: blocks a stale async rebuild from marking the BM25 cache clean.
+- TrainableEmbeddingBasis.swift `releaseBasis()`: provider hook that frees trained in-memory state after reindex.
 
 ### Facade : CorpusKit.swift
 - :50 `enum FloatLaneOutcome` : `.hits`/`.unavailableProviderOptOut`/`.unavailableNoVocabHit`/`.unavailableNoFloatRows`/`.emptyQuery`/`.storeError`; dark lanes are typed outcomes, NEVER errors

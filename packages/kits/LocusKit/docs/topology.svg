@@ -3,15 +3,15 @@
 doc: topology
 package: LocusKit
 repo: moot-memory
-authored_commit: 4efc762d79d95b353e63559eae45c91a52508853
-authored_date: 2026-07-07
+authored_commit: daa855b9e43c6978d8481561f1e073533059735b
+authored_date: 2026-07-23
 sources:
   - path: Sources/LocusKit/Estate.swift
-    blob: 40fab998a8eca155c749460190cca0c31cf3098c
+    blob: 96cfaf24d9a52c11c5199fd567d897640ccd1b9a
   - path: Sources/LocusKit/EstateVerbs.swift
-    blob: ae30cf0be732d3b68bdb94e0193fd37171def37b
+    blob: ce68fa4cbb672a4cf24a7ea175b1b4c82305b723
   - path: Sources/LocusKit/DrawerStore.swift
-    blob: b8241ac78713ae087cf67fdd5f012310eda90e76
+    blob: 71343870973a463961c089c05de9a55412730ab5
   - path: Sources/LocusKit/NodeStore.swift
     blob: 5fe41a84a4594365c16fe8616df24eb828092dbe
   - path: Sources/LocusKit/ContainerFingerprintStore.swift
@@ -20,6 +20,8 @@ sources:
     blob: f2e25b7a0037131f4ea230bff62d33601a4af1f5
   - path: Sources/LocusKit/MerkleRollup.swift
     blob: ad7b32eb7d9ed1938e1c88c8abfedecb40500562
+  - path: Sources/LocusKit/DatasetHandle.swift
+    blob: 196e7250abbe2ae3d1ab88b6320d1dee3d9b3855
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="620" viewBox="0 0 960 620" font-family="Helvetica, Arial, sans-serif">
   <defs>
